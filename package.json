@@ -1,0 +1,92 @@
+{
+  "name": "bbb-brick-by-brick",
+  "displayName": "BBB (Brick by Brick)",
+  "description": "Forces you to perform Copilot's actions yourself, one step at a time, from a playbook.",
+  "version": "0.2.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Education",
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:.bbb/playbook.md"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "bbb.startPlaybook",
+        "title": "BBB: Start playbook lesson"
+      },
+      {
+        "command": "bbb.resume",
+        "title": "BBB: Verify current step and advance"
+      },
+      {
+        "command": "bbb.openPlaybook",
+        "title": "BBB: Open playbook"
+      },
+      {
+        "command": "bbb.installCopilotInstructions",
+        "title": "BBB: Install Copilot instructions into this workspace"
+      },
+      {
+        "command": "bbb.cancelLesson",
+        "title": "BBB: Cancel current lesson"
+      },
+      {
+        "command": "bbb.practiceEdit",
+        "title": "BBB: Practice this edit (ad-hoc drill)"
+      },
+      {
+        "command": "bbb.practiceFromClipboard",
+        "title": "BBB: Practice edit from clipboard (ad-hoc drill)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "bbb.resume",
+        "key": "ctrl+alt+.",
+        "mac": "cmd+alt+."
+      }
+    ],
+    "configuration": {
+      "title": "BBB (Brick by Brick)",
+      "properties": {
+        "bbb.playbookPath": {
+          "type": "string",
+          "default": ".bbb/playbook.md",
+          "description": "Workspace-relative path to the playbook file BBB watches."
+        },
+        "bbb.autoStartOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start a lesson the first time the playbook is saved."
+        },
+        "bbb.strictTyping": {
+          "type": "boolean",
+          "default": true,
+          "description": "(Ad-hoc drill only) Reject incorrect keystrokes vs. just highlight."
+        },
+        "bbb.showHintAfterMs": {
+          "type": "number",
+          "default": 4000,
+          "description": "(Ad-hoc drill only) Milliseconds of inactivity before showing a hint."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.93.0",
+    "typescript": "^5.4.0"
+  }
+}
