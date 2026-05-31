@@ -2,15 +2,29 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "type": "npm",
-      "script": "compile",
+      "type": "shell",
+      "command": "npm.cmd",
+      "args": ["run", "compile"],
+      "options": {
+        "shell": {
+          "executable": "C:\\Windows\\System32\\cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
       "problemMatcher": ["$tsc"],
       "group": "build",
       "label": "npm: compile"
     },
     {
-      "type": "npm",
-      "script": "watch",
+      "type": "shell",
+      "command": "npm.cmd",
+      "args": ["run", "watch"],
+      "options": {
+        "shell": {
+          "executable": "C:\\Windows\\System32\\cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
       "problemMatcher": ["$tsc-watch"],
       "isBackground": true,
       "group": "build",

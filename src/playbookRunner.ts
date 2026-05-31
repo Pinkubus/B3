@@ -6,6 +6,7 @@ import {
     StepSnapshot,
 } from "./handlers";
 import { KeybindingResolver } from "./keybindings";
+import { log } from "./log";
 
 /**
  * Drives a playbook lesson: shows one status-bar prompt at a time, advances
@@ -46,14 +47,19 @@ export class PlaybookRunner {
                     const value = typeof cl === "string" ? cl : cl?.value ?? "";
                     if (value) {
                         this.terminalLog.push(value);
+                        log.info("terminal exec observed", { value });
                     }
                 }),
             );
+            log.info("onDidStartTerminalShellExecution subscribed");
+        } else {
+            log.warn("onDidStartTerminalShellExecution not available; terminal steps will trust the user");
         }
     }
 
     /** Start a fresh lesson from the given playbook URI. */
     async start(uri: vscode.Uri): Promise<void> {
+        log.info("runner.start", { uri: uri.toString() });
         this.playbookUri = uri;
         this.lineOffsets.clear();
         this.currentIdx = -1;
@@ -73,10 +79,11 @@ export class PlaybookRunner {
         const { steps, warnings } = parsePlaybook(text);
         const prevCount = this.steps.length;
         this.steps = steps;
-        for (const w of warnings) {
-            console.warn(`[bbb] ${w}`);
-        }
         const added = steps.length - prevCount;
+        log.info("playbook parsed", { total: steps.length, added, warnings: warnings.length });
+        for (const w of warnings) {
+            log.warn(`parse: ${w}`);
+        }
         // If we were waiting at the end and new steps showed up, reactivate.
         if (this.finished && added > 0) {
             this.finished = false;
@@ -99,6 +106,7 @@ export class PlaybookRunner {
             const handler = handlerFor(step);
             const snapshot = this.currentSnapshot ?? this.takeSnapshot();
             const result = await handler.verify(step, this.context(), snapshot);
+            log.info("verify", { idx: this.currentIdx, kind: step.kind, result });
             if (!result.ok) {
                 vscode.window.setStatusBarMessage(`BBB: ${result.reason}`, 4000);
                 return;
@@ -127,10 +135,11 @@ export class PlaybookRunner {
         const handler = handlerFor(step);
         const snapshot = this.takeSnapshot();
         this.currentSnapshot = snapshot;
+        log.info("activate step", { idx: this.currentIdx, kind: step.kind, sourceLine: step.sourceLine });
         try {
             await handler.activate?.(step, this.context(), snapshot);
         } catch (err) {
-            console.error(`[bbb] activate failed for step ${step.index + 1}:`, err);
+            log.error(`activate failed for step ${step.index + 1}`, err);
         }
         const prompt = handler.prompt(step, this.context(), snapshot);
         this.statusBar.text = `$(debug-step-over) BBB ${this.currentIdx + 1}/${this.steps.length}: ${prompt}`;

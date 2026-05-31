@@ -5,35 +5,109 @@ import { KeybindingResolver } from "./keybindings";
 import { buildLesson, TargetEdit } from "./lessonEngine";
 import { StepExecutor } from "./stepExecutor";
 import { PlaybookRunner } from "./playbookRunner";
+import { log } from "./log";
 
 let activeLesson: StepExecutor | undefined;
 let runner: PlaybookRunner | undefined;
-const kb = new KeybindingResolver();
+let kb: KeybindingResolver | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-    runner = new PlaybookRunner(kb);
-    context.subscriptions.push(
-        { dispose: () => runner?.dispose() },
-        vscode.commands.registerCommand("bbb.startPlaybook", () => startPlaybook()),
-        vscode.commands.registerCommand("bbb.resume", () => runner?.advance()),
-        vscode.commands.registerCommand("bbb.openPlaybook", () => openPlaybook()),
-        vscode.commands.registerCommand("bbb.installCopilotInstructions", () =>
-            installCopilotInstructions(context),
-        ),
-        vscode.commands.registerCommand("bbb.cancelLesson", () => cancelLesson()),
-        vscode.commands.registerCommand("bbb.practiceEdit", () => practiceEdit()),
-        vscode.commands.registerCommand("bbb.practiceFromClipboard", () =>
-            practiceEdit({ fromClipboard: true }),
-        ),
-    );
+    const channel = log.init();
+    context.subscriptions.push(channel);
+    log.info("activate() called", {
+        extensionPath: context.extensionPath,
+        vscodeVersion: vscode.version,
+        nodeVersion: process.versions.node,
+        platform: process.platform,
+        workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [],
+    });
 
-    if (vscode.workspace.getConfiguration("bbb").get<boolean>("autoStartOnSave", false)) {
+    try {
+        kb = new KeybindingResolver();
+        log.info("KeybindingResolver constructed");
+    } catch (err) {
+        log.error("KeybindingResolver constructor threw", err);
+        // Fall through with a stub so activation still completes; commands that need kb will guard.
+    }
+
+    try {
+        runner = new PlaybookRunner(kb ?? new KeybindingResolver());
+        log.info("PlaybookRunner constructed");
+    } catch (err) {
+        log.error("PlaybookRunner constructor threw", err);
+        void vscode.window.showErrorMessage(
+            "BBB failed to start. Run `BBB: Show diagnostic log` for details.",
+        );
+        return;
+    }
+
+    try {
         context.subscriptions.push(
-            vscode.workspace.onDidSaveTextDocument((doc) => {
-                if (matchesPlaybookPath(doc.uri)) {
-                    void runner?.start(doc.uri);
-                }
-            }),
+            { dispose: () => runner?.dispose() },
+            vscode.commands.registerCommand("bbb.showLog", () => log.show(false)),
+            vscode.commands.registerCommand("bbb.startPlaybook", () => guard("startPlaybook", startPlaybook)),
+            vscode.commands.registerCommand("bbb.resume", () => guard("resume", () => runner?.advance())),
+            vscode.commands.registerCommand("bbb.openPlaybook", () => guard("openPlaybook", openPlaybook)),
+            vscode.commands.registerCommand("bbb.installCopilotInstructions", () =>
+                guard("installCopilotInstructions", () => installCopilotInstructions(context)),
+            ),
+            vscode.commands.registerCommand("bbb.cancelLesson", () => guard("cancelLesson", cancelLesson)),
+            vscode.commands.registerCommand("bbb.practiceEdit", () => guard("practiceEdit", () => practiceEdit())),
+            vscode.commands.registerCommand("bbb.practiceFromClipboard", () =>
+                guard("practiceFromClipboard", () => practiceEdit({ fromClipboard: true })),
+            ),
+        );
+        log.info("commands registered");
+    } catch (err) {
+        log.error("command registration threw", err);
+        void vscode.window.showErrorMessage(
+            "BBB command registration failed. Run `BBB: Show diagnostic log` for details.",
+        );
+        return;
+    }
+
+    try {
+        if (vscode.workspace.getConfiguration("bbb").get<boolean>("autoStartOnSave", false)) {
+            context.subscriptions.push(
+                vscode.workspace.onDidSaveTextDocument((doc) => {
+                    if (matchesPlaybookPath(doc.uri)) {
+                        log.info("autoStartOnSave triggered", { uri: doc.uri.toString() });
+                        void runner?.start(doc.uri);
+                    }
+                }),
+            );
+            log.info("autoStartOnSave watcher attached");
+        }
+    } catch (err) {
+        log.error("autoStartOnSave setup threw", err);
+    }
+
+    // Auto-install Copilot instructions on first activation in any workspace
+    // that doesn't have them yet. Without these, Copilot edits files directly
+    // and BBB has nothing to drive. Controlled by `bbb.autoInstallInstructions`
+    // (default true) so users who don't want this can opt out.
+    try {
+        if (vscode.workspace.getConfiguration("bbb").get<boolean>("autoInstallInstructions", true)) {
+            void ensureCopilotInstructions(context);
+        }
+    } catch (err) {
+        log.error("auto-install instructions check threw", err);
+    }
+
+    log.info("activate() complete");
+    // Reveal the log on activation so first-run problems are obvious.
+    log.show(true);
+}
+
+async function guard(name: string, fn: () => unknown | Promise<unknown>): Promise<void> {
+    log.info(`command:${name} invoked`);
+    try {
+        await fn();
+        log.info(`command:${name} ok`);
+    } catch (err) {
+        log.error(`command:${name} threw`, err);
+        void vscode.window.showErrorMessage(
+            `BBB: ${name} failed — see "BBB" output channel for details.`,
         );
     }
 }
@@ -80,7 +154,7 @@ async function startPlaybook(): Promise<void> {
         }
         return;
     }
-    kb.refresh();
+    kb?.refresh();
     await runner?.start(uri);
 }
 
@@ -93,22 +167,75 @@ async function openPlaybook(): Promise<void> {
     await vscode.window.showTextDocument(uri);
 }
 
+const BBB_INSTRUCTIONS_MARKER = "# BBB (Brick by Brick) — Working with this user";
+
+/**
+ * Silent install used on activation. No prompts, no toasts, no editor opening.
+ * - If the file is missing, write the template.
+ * - If the file exists but doesn't contain our marker, append it.
+ * - If the marker is already present, do nothing.
+ */
+async function ensureCopilotInstructions(context: vscode.ExtensionContext): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+        return;
+    }
+    const template = readInstructionsTemplate(context);
+    if (!template) {
+        return;
+    }
+    const targetDir = vscode.Uri.joinPath(folder.uri, ".github");
+    const targetFile = vscode.Uri.joinPath(targetDir, "copilot-instructions.md");
+
+    let existing: string | null = null;
+    try {
+        existing = new TextDecoder("utf-8").decode(await vscode.workspace.fs.readFile(targetFile));
+    } catch {
+        // missing — fall through to create
+    }
+
+    if (existing === null) {
+        await vscode.workspace.fs.createDirectory(targetDir);
+        await vscode.workspace.fs.writeFile(targetFile, new TextEncoder().encode(template));
+        log.info("auto-installed copilot instructions", { uri: targetFile.toString() });
+        return;
+    }
+
+    if (existing.includes(BBB_INSTRUCTIONS_MARKER)) {
+        log.info("copilot instructions already contain BBB section; nothing to do");
+        return;
+    }
+
+    const combined = existing.replace(/\s+$/, "") + "\n\n" + template;
+    await vscode.workspace.fs.writeFile(targetFile, new TextEncoder().encode(combined));
+    log.info("auto-appended BBB section to existing copilot instructions", {
+        uri: targetFile.toString(),
+    });
+}
+
+function readInstructionsTemplate(context: vscode.ExtensionContext): string | null {
+    const templatePath = path.join(
+        context.extensionPath,
+        "resources",
+        "copilot-instructions.template.md",
+    );
+    try {
+        return fs.readFileSync(templatePath, "utf8");
+    } catch (err) {
+        log.error("cannot read instructions template", err);
+        return null;
+    }
+}
+
 async function installCopilotInstructions(context: vscode.ExtensionContext): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
         void vscode.window.showErrorMessage("BBB: open a workspace folder first.");
         return;
     }
-    const templatePath = path.join(
-        context.extensionPath,
-        "resources",
-        "copilot-instructions.template.md",
-    );
-    let template: string;
-    try {
-        template = fs.readFileSync(templatePath, "utf8");
-    } catch (err) {
-        void vscode.window.showErrorMessage(`BBB: cannot read template: ${err}`);
+    const template = readInstructionsTemplate(context);
+    if (!template) {
+        void vscode.window.showErrorMessage("BBB: cannot read template — see BBB output.");
         return;
     }
     const targetDir = vscode.Uri.joinPath(folder.uri, ".github");
@@ -203,14 +330,14 @@ async function practiceEdit(opts: { fromClipboard?: boolean } = {}): Promise<voi
     }
 
     // Refresh user keybindings each lesson — cheap, and picks up live changes.
-    kb.refresh();
+    kb?.refresh();
 
     const target: TargetEdit = {
         uri: editor.document.uri,
         startLine: Number(lineStr),
         text,
     };
-    const steps = buildLesson(target, kb);
+    const steps = buildLesson(target, kb ?? new KeybindingResolver());
     activeLesson = new StepExecutor(steps, strictModeEnabled());
     try {
         await activeLesson.run();

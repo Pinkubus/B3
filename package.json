@@ -12,6 +12,7 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "workspaceContains:.bbb/playbook.md"
   ],
   "main": "./out/extension.js",
@@ -32,6 +33,10 @@
       {
         "command": "bbb.installCopilotInstructions",
         "title": "BBB: Install Copilot instructions into this workspace"
+      },
+      {
+        "command": "bbb.showLog",
+        "title": "BBB: Show diagnostic log"
       },
       {
         "command": "bbb.cancelLesson",
@@ -65,6 +70,11 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically start a lesson the first time the playbook is saved."
+        },
+        "bbb.autoInstallInstructions": {
+          "type": "boolean",
+          "default": true,
+          "description": "On activation, silently write .github/copilot-instructions.md (or append the BBB section) if missing. Without this, Copilot will edit files directly instead of writing a playbook."
         },
         "bbb.strictTyping": {
           "type": "boolean",
