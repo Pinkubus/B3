@@ -4,8 +4,10 @@ import {
     handlerFor,
     HandlerContext,
     StepSnapshot,
+    workspaceUriForFile,
 } from "./handlers";
 import { KeybindingResolver } from "./keybindings";
+import { TeachView } from "./teachView";
 import { log } from "./log";
 
 /**
@@ -25,9 +27,26 @@ export class PlaybookRunner {
     private subs: vscode.Disposable[] = [];
     private keybindings: KeybindingResolver;
     private finished: boolean = false;
+    private pages: string[] = [];
+    private currentPage: number = 0;
+    private instructionsVisible: boolean = true;
+    private teachView = new TeachView();
+    private globalState: vscode.Memento;
+    private comprehensionEnabled: boolean;
 
-    constructor(keybindings: KeybindingResolver) {
+    /** globalState key persisting whether comprehension popups are shown. */
+    private static readonly COMPREHENSION_KEY = "bbb.comprehensionEnabled";
+
+    /** Target max for the total visible status-bar text (prefix + message). */
+    private static readonly PAGE_LENGTH = 60;
+
+    constructor(keybindings: KeybindingResolver, globalState: vscode.Memento) {
         this.keybindings = keybindings;
+        this.globalState = globalState;
+        this.comprehensionEnabled = globalState.get<boolean>(
+            PlaybookRunner.COMPREHENSION_KEY,
+            true,
+        );
         this.statusBar = vscode.window.createStatusBarItem(
             vscode.StatusBarAlignment.Left,
             10_000,
@@ -64,9 +83,46 @@ export class PlaybookRunner {
         this.lineOffsets.clear();
         this.currentIdx = -1;
         this.finished = false;
+        this.pages = [];
+        this.currentPage = 0;
+        this.currentSnapshot = null;
         await this.reload();
         this.attachWatcher(uri);
-        await this.advance();
+        await this.startFirstStep();
+    }
+
+    /**
+     * After (re)loading, skip past any leading `edit` steps whose content is
+     * already present in the target files, then activate the first step that
+     * still needs doing. Lets a partially-applied playbook resume where it left off.
+     */
+    private async startFirstStep(): Promise<void> {
+        let idx = 0;
+        while (idx < this.steps.length) {
+            const step = this.steps[idx];
+            if (step.kind !== "edit") {
+                break;
+            }
+            const result = await handlerFor(step).verify(step, this.context(), this.takeSnapshot());
+            if (!result.ok) {
+                break;
+            }
+            log.info("startup: skipping already-complete step", { idx, kind: step.kind });
+            idx++;
+        }
+        if (idx >= this.steps.length) {
+            this.currentIdx = this.steps.length;
+            this.finished = true;
+            this.statusBar.text = "$(check) BBB lesson complete";
+            this.statusBar.tooltip = "All steps were already applied. Edit the playbook and save to add more.";
+            if (this.instructionsVisible) {
+                this.statusBar.show();
+            }
+            log.info("startup: all steps already complete");
+            return;
+        }
+        this.currentIdx = idx;
+        await this.activateCurrent();
     }
 
     /** Re-parse the playbook from disk (preserves progress). */
@@ -84,6 +140,16 @@ export class PlaybookRunner {
         for (const w of warnings) {
             log.warn(`parse: ${w}`);
         }
+        // If an active step's content changed, refresh its displayed prompt.
+        if (this.currentIdx >= 0 && this.currentIdx < this.steps.length) {
+            const step = this.steps[this.currentIdx];
+            const handler = handlerFor(step);
+            const snap = this.currentSnapshot ?? this.takeSnapshot();
+            const refreshedPrompt = handler.prompt(step, this.context(), snap);
+            this.pages = PlaybookRunner.splitIntoPages(refreshedPrompt, this.promptPageMax());
+            this.currentPage = 0;
+            this.updateStatusBar();
+        }
         // If we were waiting at the end and new steps showed up, reactivate.
         if (this.finished && added > 0) {
             this.finished = false;
@@ -93,13 +159,21 @@ export class PlaybookRunner {
     }
 
     /**
-     * Called when the user presses Ctrl+Alt+. — verify the current step, and
-     * if it passes, move to the next.
+     * Called when the user presses Ctrl+Alt+. — advance through pages first,
+     * then verify the current step and move to the next.
      */
     async advance(): Promise<void> {
         if (!this.playbookUri) {
             return;
         }
+
+        // If there are more pages for the current step, show the next page.
+        if (this.pages.length > 1 && this.currentPage < this.pages.length - 1) {
+            this.currentPage++;
+            this.updateStatusBar();
+            return;
+        }
+
         // If there is a current step, verify it first.
         if (this.currentIdx >= 0 && this.currentIdx < this.steps.length) {
             const step = this.steps[this.currentIdx];
@@ -110,6 +184,10 @@ export class PlaybookRunner {
             if (!result.ok) {
                 vscode.window.setStatusBarMessage(`BBB: ${result.reason}`, 4000);
                 return;
+            }
+            // The user just finished this step — show its comprehension popup, if any.
+            if (step.teach && step.teach.trim()) {
+                await this.showTeach(step);
             }
         }
 
@@ -122,7 +200,9 @@ export class PlaybookRunner {
                 this.finished = true;
                 this.statusBar.text = "$(check) BBB lesson complete";
                 this.statusBar.tooltip = "Waiting for more steps. Edit the playbook and save to continue.";
-                this.statusBar.show();
+                if (this.instructionsVisible) {
+                    this.statusBar.show();
+                }
                 return;
             }
         }
@@ -142,9 +222,52 @@ export class PlaybookRunner {
             log.error(`activate failed for step ${step.index + 1}`, err);
         }
         const prompt = handler.prompt(step, this.context(), snapshot);
-        this.statusBar.text = `$(debug-step-over) BBB ${this.currentIdx + 1}/${this.steps.length}: ${prompt}`;
+        this.pages = PlaybookRunner.splitIntoPages(prompt, this.promptPageMax());
+        this.currentPage = 0;
+        this.updateStatusBar();
+    }
+
+    /** Available chars for the message portion given the fixed prefix rendered in the status bar. */
+    private promptPageMax(): number {
+        // $(debug-step-over) renders as a single icon glyph, not 18 chars.
+        const raw = `$(debug-step-over) BBB ${this.currentIdx + 1}/${this.steps.length}: `;
+        const visiblePrefix = raw.length - "$(debug-step-over)".length + 1;
+        return Math.max(30, PlaybookRunner.PAGE_LENGTH - visiblePrefix);
+    }
+
+    private updateStatusBar(): void {
+        if (!this.instructionsVisible) {
+            return;
+        }
+        const step = this.steps[this.currentIdx];
+        const page = this.pages[this.currentPage];
+        const pageTag = this.pages.length > 1 ? ` (${this.currentPage + 1}/${this.pages.length})` : "";
+        this.statusBar.text = `$(debug-step-over) BBB ${this.currentIdx + 1}/${this.steps.length}: ${page}${pageTag}`;
         this.statusBar.tooltip = step.description;
         this.statusBar.show();
+    }
+
+    private static splitIntoPages(text: string, max: number): string[] {
+        // Status-bar items are single-line: collapse newlines so multi-line
+        // bodies don't blow past the visible edge.
+        text = text.replace(/\r?\n/g, " ⏎ ").replace(/\s{2,}/g, " ").trim();
+        if (text.length <= max) {
+            return [text];
+        }
+        const pages: string[] = [];
+        let remaining = text;
+        while (remaining.length > max) {
+            let splitAt = remaining.lastIndexOf(" ", max);
+            if (splitAt <= 0) {
+                splitAt = max;
+            }
+            pages.push(remaining.slice(0, splitAt).trimEnd());
+            remaining = remaining.slice(splitAt).trimStart();
+        }
+        if (remaining.length > 0) {
+            pages.push(remaining);
+        }
+        return pages;
     }
 
     private takeSnapshot(): StepSnapshot {
@@ -179,9 +302,263 @@ export class PlaybookRunner {
         );
     }
 
+    /**
+     * Apply the current edit step automatically — opens the file, scrolls to the
+     * target line so the user can see where the edit lands, **inserts** the
+     * expected text (pushing existing lines down rather than overwriting them),
+     * verifies the result, then advances. If the insertion doesn't produce the
+     * expected code (line number drifted, surrounding block wrong), it rolls the
+     * file back and warns instead of leaving broken code behind.
+     */
+    async applyCurrentStep(): Promise<void> {
+        if (this.currentIdx < 0 || this.currentIdx >= this.steps.length) {
+            return;
+        }
+        const step = this.steps[this.currentIdx];
+        if (step.kind !== "edit") {
+            vscode.window.setStatusBarMessage("BBB: auto-apply only works for edit steps", 3000);
+            return;
+        }
+        const snap = this.currentSnapshot ?? this.takeSnapshot();
+        const handler = handlerFor(step);
+
+        // Open the file and reveal the target line so the user can see where it goes.
+        try {
+            await handler.activate?.(step, this.context(), snap);
+        } catch (err) {
+            log.error("applyCurrentStep: activate failed", err);
+        }
+
+        const uri = workspaceUriForFile(this.playbookUri!, step.file);
+        const offset = snap.lineOffsets[uri.toString()] ?? 0;
+        const targetZero = step.line - 1 + offset;
+        const doc = await vscode.workspace.openTextDocument(uri);
+
+        // Verify-before: if the step's content is already present, don't insert a
+        // duplicate — just move on.
+        const pre = await handler.verify(step, this.context(), snap);
+        if (pre.ok) {
+            log.info("applyCurrentStep: already satisfied; advancing", { idx: this.currentIdx });
+            await this.advance();
+            return;
+        }
+
+        // Build the lines to insert: first line carries the required indent,
+        // the rest are verbatim (they already include their own indentation).
+        const bodyLines = step.body.split(/\r?\n/);
+        const textLines = bodyLines.map((l, i) =>
+            i === 0 ? " ".repeat(step.indent) + l.replace(/^\s*/, "") : l,
+        );
+
+        // Snapshot the original so we can roll back if placement is wrong.
+        const originalText = doc.getText();
+
+        const wsEdit = new vscode.WorkspaceEdit();
+        if (targetZero <= doc.lineCount - 1) {
+            // Insert BEFORE the current line at targetZero, shifting it (and
+            // everything below) down. This never overwrites existing code.
+            wsEdit.insert(uri, new vscode.Position(targetZero, 0), textLines.join("\n") + "\n");
+        } else {
+            // Target is past the end of file: pad with blank lines, then append.
+            const lastLine = doc.lineCount - 1;
+            const lastLineEnd = new vscode.Position(lastLine, doc.lineAt(lastLine).text.length);
+            const pad = "\n".repeat(targetZero - doc.lineCount + 1);
+            wsEdit.insert(uri, lastLineEnd, pad + textLines.join("\n"));
+        }
+        await vscode.workspace.applyEdit(wsEdit);
+
+        // Verify-after: confirm the line(s) and the surrounding code block are correct.
+        const post = await handler.verify(step, this.context(), snap);
+        if (!post.ok) {
+            // Roll the file back to its exact prior contents — leave nothing broken.
+            const fresh = await vscode.workspace.openTextDocument(uri);
+            const fullRange = new vscode.Range(
+                new vscode.Position(0, 0),
+                fresh.lineAt(fresh.lineCount - 1).range.end,
+            );
+            const undo = new vscode.WorkspaceEdit();
+            undo.replace(uri, fullRange, originalText);
+            await vscode.workspace.applyEdit(undo);
+            log.warn("applyCurrentStep: placement failed, rolled back", { idx: this.currentIdx, reason: post.reason });
+            void vscode.window.showWarningMessage(
+                `BBB: couldn't place that edit safely — ${post.reason}. Nothing was changed; check the target line number in the playbook.`,
+                { modal: true },
+                "OK",
+            );
+            return;
+        }
+
+        // advance() re-verifies (passes), shows the teach note, and moves on.
+        await this.advance();
+    }
+
+    /** Show why the current step's verification is failing (shown as a modal). */
+    async showValidationReason(): Promise<void> {
+        if (this.currentIdx < 0 || this.currentIdx >= this.steps.length) {
+            void vscode.window.showInformationMessage("BBB: no active step.");
+            return;
+        }
+        const step = this.steps[this.currentIdx];
+        const handler = handlerFor(step);
+        const snap = this.currentSnapshot ?? this.takeSnapshot();
+        const result = await handler.verify(step, this.context(), snap);
+        if (result.ok) {
+            void vscode.window.showInformationMessage(
+                "BBB: step is already satisfied — press Ctrl+Alt+. to advance.",
+            );
+        } else {
+            void vscode.window.showWarningMessage(
+                `BBB: Cannot advance — ${result.reason}`,
+                { modal: true },
+                "OK",
+            );
+        }
+    }
+
+    /**
+     * Comprehension-mode popup shown right after the user completes a step that
+     * carries a `teach` note. Explains what they just wrote.
+     */
+    private async showTeach(step: PlaybookStep): Promise<void> {
+        if (!this.comprehensionEnabled) {
+            return;
+        }
+        const text = (step.teach ?? "").trim();
+        if (!text) {
+            return;
+        }
+        log.info("teach popup", { idx: this.currentIdx });
+        this.teachView.show(step.description, text);
+    }
+
+    /** Toggle comprehension mode on/off and remember it across sessions. */
+    toggleComprehension(): void {
+        this.comprehensionEnabled = !this.comprehensionEnabled;
+        void this.globalState.update(
+            PlaybookRunner.COMPREHENSION_KEY,
+            this.comprehensionEnabled,
+        );
+        if (!this.comprehensionEnabled) {
+            this.teachView.dispose();
+        } else if (this.currentIdx >= 0 && this.currentIdx < this.steps.length) {
+            // Re-show the note for the current step so the effect is visible immediately.
+            const step = this.steps[this.currentIdx];
+            if (step.teach && step.teach.trim()) {
+                this.teachView.show(step.description, step.teach.trim());
+            }
+        }
+        vscode.window.setStatusBarMessage(
+            `BBB: comprehension mode ${this.comprehensionEnabled ? "ON" : "OFF"}`,
+            3000,
+        );
+        log.info("runner.toggleComprehension", { enabled: this.comprehensionEnabled });
+    }
+
+    /** Show the explain/why for the current step in a modal popup. */
+    async showWhy(): Promise<void> {
+        if (this.currentIdx < 0 || this.currentIdx >= this.steps.length) {
+            void vscode.window.showInformationMessage("BBB: no active step.");
+            return;
+        }
+        const step = this.steps[this.currentIdx];
+        const why = step.explain.trim();
+        if (!why) {
+            void vscode.window.showInformationMessage("BBB: no explanation recorded for this step.");
+            return;
+        }
+        await vscode.window.showInformationMessage(
+            `Step ${this.currentIdx + 1} — Why: ${why}`,
+            { modal: true },
+            "OK",
+        );
+    }
+
+    /** Skip the current step without verifying it. */
+    async skipStep(): Promise<void> {
+        if (!this.playbookUri) {
+            return;
+        }
+        this.pages = [];
+        this.currentPage = 0;
+        this.currentIdx++;
+        if (this.currentIdx >= this.steps.length) {
+            const { added } = await this.reload();
+            if (added <= 0) {
+                this.finished = true;
+                this.statusBar.text = "$(check) BBB lesson complete";
+                this.statusBar.tooltip = "Waiting for more steps. Edit the playbook and save to continue.";
+                if (this.instructionsVisible) {
+                    this.statusBar.show();
+                }
+                return;
+            }
+        }
+        log.info("runner.skipStep", { idx: this.currentIdx });
+        await this.activateCurrent();
+    }
+
+    /** Stop the active playbook lesson and hide the status bar. */
+    stop(): void {
+        this.watcher?.dispose();
+        this.watcher = null;
+        this.playbookUri = null;
+        this.steps = [];
+        this.currentIdx = -1;
+        this.finished = false;
+        this.pages = [];
+        this.currentPage = 0;
+        this.lineOffsets.clear();
+        this.statusBar.hide();
+        log.info("runner.stop");
+    }
+
+    /** Go back one step (re-shows its prompt without re-running activate). */
+    async rewind(): Promise<void> {
+        if (!this.playbookUri) {
+            return;
+        }
+        // If we're mid-page, go back to the first page of the current step first.
+        if (this.currentPage > 0) {
+            this.currentPage = 0;
+            this.updateStatusBar();
+            return;
+        }
+        if (this.currentIdx <= 0) {
+            vscode.window.setStatusBarMessage("BBB: already at the first step", 3000);
+            return;
+        }
+        this.currentIdx--;
+        this.finished = false;
+        const step = this.steps[this.currentIdx];
+        const handler = handlerFor(step);
+        const snapshot = this.takeSnapshot();
+        this.currentSnapshot = snapshot;
+        const prompt = handler.prompt(step, this.context(), snapshot);
+        this.pages = PlaybookRunner.splitIntoPages(prompt, this.promptPageMax());
+        this.currentPage = 0;
+        log.info("runner.rewind", { idx: this.currentIdx });
+        this.updateStatusBar();
+    }
+
+    /** Toggle visibility of the status-bar instruction text. */
+    toggleInstructions(): void {
+        this.instructionsVisible = !this.instructionsVisible;
+        if (this.instructionsVisible) {
+            if (this.currentIdx >= 0 && this.currentIdx < this.steps.length) {
+                this.updateStatusBar();
+            } else if (this.finished) {
+                this.statusBar.show();
+            }
+        } else {
+            this.statusBar.hide();
+        }
+        log.info("runner.toggleInstructions", { visible: this.instructionsVisible });
+    }
+
     dispose(): void {
         this.statusBar.dispose();
         this.watcher?.dispose();
+        this.teachView.dispose();
         for (const s of this.subs) {
             s.dispose();
         }

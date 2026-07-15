@@ -31,7 +31,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     try {
-        runner = new PlaybookRunner(kb ?? new KeybindingResolver());
+        runner = new PlaybookRunner(kb ?? new KeybindingResolver(), context.globalState);
         log.info("PlaybookRunner constructed");
     } catch (err) {
         log.error("PlaybookRunner constructor threw", err);
@@ -56,6 +56,17 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand("bbb.practiceFromClipboard", () =>
                 guard("practiceFromClipboard", () => practiceEdit({ fromClipboard: true })),
             ),
+            vscode.commands.registerCommand("bbb.stopLesson", () => guard("stopLesson", () => runner?.stop())),
+            vscode.commands.registerCommand("bbb.rewind", () => guard("rewind", () => runner?.rewind())),
+            vscode.commands.registerCommand("bbb.toggleInstructions", () =>
+                guard("toggleInstructions", () => runner?.toggleInstructions()),
+            ),
+            vscode.commands.registerCommand("bbb.skipStep", () => guard("skipStep", () => runner?.skipStep())),
+            vscode.commands.registerCommand("bbb.showWhy", () => guard("showWhy", () => runner?.showWhy())),
+            vscode.commands.registerCommand("bbb.applyStep", () => guard("applyStep", () => runner?.applyCurrentStep())),
+            vscode.commands.registerCommand("bbb.showValidationReason", () => guard("showValidationReason", () => runner?.showValidationReason())),
+            vscode.commands.registerCommand("bbb.toggleComprehension", () => guard("toggleComprehension", () => runner?.toggleComprehension())),
+            vscode.commands.registerCommand("bbb.explainSelection", () => guard("explainSelection", explainSelection)),
         );
         log.info("commands registered");
     } catch (err) {
@@ -156,6 +167,36 @@ async function startPlaybook(): Promise<void> {
     }
     kb?.refresh();
     await runner?.start(uri);
+}
+
+/**
+ * Ask Copilot (inline chat) to explain the current selection: what the whole
+ * thing does and what each constituent part does. Mirrors pressing Ctrl+I and
+ * typing the question.
+ */
+async function explainSelection(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.selection.isEmpty) {
+        void vscode.window.showInformationMessage(
+            "BBB: highlight some code first, then press Alt+Shift+Y.",
+        );
+        return;
+    }
+    const question =
+        "What is this? Explain what the entire highlighted selection does, then break down what each of its constituent parts does.";
+    try {
+        await vscode.commands.executeCommand("inlineChat.start", {
+            message: question,
+            autoSend: true,
+        });
+    } catch (err) {
+        log.warn("inlineChat.start with message failed; falling back", err);
+        try {
+            await vscode.commands.executeCommand("inlineChat.start");
+        } catch {
+            await vscode.commands.executeCommand("workbench.action.chat.open", question);
+        }
+    }
 }
 
 async function openPlaybook(): Promise<void> {

@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import { PlaybookStep, EditStep, TerminalStep, OpenStep, GotoStep } from "./playbookParser";
-import { formatExplanation } from "./commentSyntax";
 import { KeybindingResolver } from "./keybindings";
 
 /**
@@ -46,7 +45,7 @@ export interface StepSnapshot {
 
 // ---------- helpers ----------
 
-function workspaceUriForFile(playbookUri: vscode.Uri, relOrAbs: string): vscode.Uri {
+export function workspaceUriForFile(playbookUri: vscode.Uri, relOrAbs: string): vscode.Uri {
     if (path.isAbsolute(relOrAbs)) {
         return vscode.Uri.file(relOrAbs);
     }
@@ -71,9 +70,6 @@ async function ensureLineExists(doc: vscode.TextDocument, zeroBasedLine: number)
 
 export const editHandler: StepHandler<EditStep> = {
     async activate(step, ctx, snapshot) {
-        if (!step.explain) {
-            return;
-        }
         const uri = workspaceUriForFile(ctx.playbookUri, step.file);
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preserveFocus: false });
@@ -81,25 +77,14 @@ export const editHandler: StepHandler<EditStep> = {
         const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
         const targetZero = step.line - 1 + offset;
 
-        // Make sure the typing line exists; the comment goes on the line *below* it.
         await ensureLineExists(doc, targetZero);
 
-        const commentLines = formatExplanation(doc.languageId, step.explain, step.indent);
-        // Insert at end of the typing line, prefixed with \n, so the comment occupies
-        // line targetZero+1, targetZero+2, ... and any existing content shifts down.
-        const insertPos = new vscode.Position(targetZero, doc.lineAt(targetZero).text.length);
-        const edit = new vscode.WorkspaceEdit();
-        edit.insert(doc.uri, insertPos, "\n" + commentLines.join("\n"));
-        await vscode.workspace.applyEdit(edit);
-        ctx.addLineOffset(uri.toString(), commentLines.length);
-
-        // Put the cursor at the start of the typing line, indented appropriately.
         const editor = vscode.window.activeTextEditor;
         if (editor && editor.document.uri.toString() === uri.toString()) {
             const col = step.indent;
             editor.selection = new vscode.Selection(targetZero, col, targetZero, col);
             editor.revealRange(
-                new vscode.Range(targetZero, 0, targetZero + commentLines.length, 0),
+                new vscode.Range(targetZero, 0, targetZero, 0),
                 vscode.TextEditorRevealType.InCenterIfOutsideViewport,
             );
         }
@@ -110,7 +95,7 @@ export const editHandler: StepHandler<EditStep> = {
         const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
         const displayedLine = step.line + offset;
         const indentNote = step.indent > 0 ? ` (indent ${step.indent})` : "";
-        return `Type on line ${displayedLine}${indentNote}: ${truncate(step.body, 40)} — read the comment below first, then Ctrl+Alt+.`;
+        return `Type on line ${displayedLine}${indentNote}: ${step.body} — then Ctrl+Alt+.`;
     },
 
     async verify(step, ctx, snapshot) {
@@ -161,15 +146,49 @@ export const editHandler: StepHandler<EditStep> = {
                 }
             }
         }
+        // Optional broader code-section assertion.
+        if (step.validationSection) {
+            const { file: sFile, start, end, expected } = step.validationSection;
+            const sUri = workspaceUriForFile(ctx.playbookUri, sFile);
+            let sDoc: vscode.TextDocument;
+            try {
+                sDoc = await vscode.workspace.openTextDocument(sUri);
+            } catch {
+                return { ok: false, reason: `cannot open ${sFile} for section validation` };
+            }
+            const sOffset = snapshot.lineOffsets[sUri.toString()] ?? 0;
+            const sStartZero = start - 1 + sOffset;
+            const sEndZero = end - 1 + sOffset;
+            const actualLines: string[] = [];
+            for (let i = sStartZero; i <= sEndZero && i < sDoc.lineCount; i++) {
+                actualLines.push(sDoc.lineAt(i).text);
+            }
+            const actualSection = actualLines.join("\n");
+            if (actualSection !== expected) {
+                const expectedLines = expected.split("\n");
+                const actualSplit = actualSection.split("\n");
+                let diffIdx = 0;
+                while (
+                    diffIdx < expectedLines.length &&
+                    diffIdx < actualSplit.length &&
+                    expectedLines[diffIdx] === actualSplit[diffIdx]
+                ) {
+                    diffIdx++;
+                }
+                const hint =
+                    diffIdx < expectedLines.length || diffIdx < actualSplit.length
+                        ? `line ${start + diffIdx}: expected \`${truncate(expectedLines[diffIdx] ?? "(end)", 30)}\`, got \`${truncate(actualSplit[diffIdx] ?? "(end)", 30)}\``
+                        : "length mismatch";
+                return { ok: false, reason: `code section mismatch — ${hint} (press Ctrl+Alt+Y for details)` };
+            }
+        }
         return { ok: true };
     },
 };
 
-// ---------- terminal ----------
-
 export const terminalHandler: StepHandler<TerminalStep> = {
     prompt(step) {
-        return `Run in a terminal: ${truncate(step.body, 60)} — then Ctrl+Alt+.`;
+        return `Run in a terminal: ${step.body} — then Ctrl+Alt+.`;
     },
     async verify(step, ctx, snapshot) {
         const since = ctx.terminalExecutionsSince(snapshot.terminalExecCount);

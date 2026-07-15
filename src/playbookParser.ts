@@ -17,6 +17,10 @@ interface BaseStep {
     description: string;
     /** Line in the playbook file where this step starts (for error messages). */
     sourceLine: number;
+    /** Why this step matters — shown on demand via Ctrl+Alt+Shift+Y. */
+    explain: string;
+    /** Optional comprehension note shown as a popup right after the user finishes this step. */
+    teach?: string;
 }
 
 export interface EditStep extends BaseStep {
@@ -28,8 +32,20 @@ export interface EditStep extends BaseStep {
     indent: number;
     /** Exact text to type. May contain `\n` for multi-line chunks (rare). */
     body: string;
-    /** Plain-text explanation to be rendered as a comment below the typing target. */
-    explain: string;
+    /** Optional broader code-region assertion verified after the specific line(s) pass. */
+    validationSection?: ValidationSection;
+}
+
+/** Specifies a range of lines in a file that must match exactly after an edit step completes. */
+export interface ValidationSection {
+    /** Workspace-relative or absolute path of the file to check. */
+    file: string;
+    /** 1-based inclusive start line. */
+    start: number;
+    /** 1-based inclusive end line. */
+    end: number;
+    /** Exact expected content of lines start..end joined with "\n". */
+    expected: string;
 }
 
 export interface TerminalStep extends BaseStep {
@@ -195,18 +211,29 @@ function parseStepBlock(
         return null;
     }
 
-    // The first non-explain block is the action; explain blocks attach to the preceding edit.
-    const actionBlock = bbb.find((b) => b.action !== "explain");
+    // The first non-explain, non-validate-section, non-teach block is the action.
+    const actionBlock = bbb.find(
+        (b) => b.action !== "explain" && b.action !== "validate-section" && b.action !== "teach",
+    );
     if (!actionBlock) {
         warnings.push(`Line ${block.sourceLine}: step has only 'explain' but no action; skipped.`);
         return null;
     }
     const explainBlock = bbb.find((b) => b.action === "explain");
+    const explain = actionBlock.attrs.explain ?? explainBlock?.body ?? explainBlock?.attrs.text ?? "";
+    if (!explain) {
+        warnings.push(`Line ${block.sourceLine}: step has no explain — add explain="..." or a <!-- bbb: explain --> block.`);
+    }
+
+    const teachBlock = bbb.find((b) => b.action === "teach");
+    const teach = teachBlock?.body ?? teachBlock?.attrs.text ?? undefined;
 
     const base = {
         index,
         description: block.description,
         sourceLine: block.sourceLine,
+        explain,
+        teach,
     };
 
     switch (actionBlock.action) {
@@ -223,14 +250,22 @@ function parseStepBlock(
                 warnings.push(`Line ${block.sourceLine}: 'edit' requires a fenced code block body.`);
                 return null;
             }
-            const explain =
-                actionBlock.attrs.explain ?? explainBlock?.body ?? explainBlock?.attrs.text ?? "";
-            if (!explain) {
-                warnings.push(
-                    `Line ${block.sourceLine}: 'edit' should include an explain="..." attr or a sibling <!-- bbb: explain --> block.`,
-                );
-            }
             const indent = actionBlock.attrs.indent ? Number(actionBlock.attrs.indent) : 0;
+            // Parse the optional validate-section block.
+            const sectionBlock = bbb.find((b) => b.action === "validate-section");
+            let validationSection: ValidationSection | undefined;
+            if (sectionBlock?.body != null) {
+                const sFile = sectionBlock.attrs.file ?? file;
+                const sStart = Number(sectionBlock.attrs.start);
+                const sEnd = Number(sectionBlock.attrs.end);
+                if (Number.isInteger(sStart) && Number.isInteger(sEnd) && sStart >= 1 && sEnd >= sStart) {
+                    validationSection = { file: sFile, start: sStart, end: sEnd, expected: sectionBlock.body };
+                } else {
+                    warnings.push(
+                        `Line ${block.sourceLine}: 'validate-section' requires start="N" end="M" (1-based, end ≥ start); ignored.`,
+                    );
+                }
+            }
             return {
                 ...base,
                 kind: "edit",
@@ -238,7 +273,7 @@ function parseStepBlock(
                 line,
                 indent: Number.isFinite(indent) ? indent : 0,
                 body: actionBlock.body,
-                explain,
+                validationSection,
             };
         }
         case "terminal": {

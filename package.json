@@ -49,6 +49,42 @@
       {
         "command": "bbb.practiceFromClipboard",
         "title": "BBB: Practice edit from clipboard (ad-hoc drill)"
+      },
+      {
+        "command": "bbb.stopLesson",
+        "title": "BBB: Stop playbook lesson"
+      },
+      {
+        "command": "bbb.rewind",
+        "title": "BBB: Go back one step"
+      },
+      {
+        "command": "bbb.toggleInstructions",
+        "title": "BBB: Toggle instruction text"
+      },
+      {
+        "command": "bbb.skipStep",
+        "title": "BBB: Skip current step"
+      },
+      {
+        "command": "bbb.showWhy",
+        "title": "BBB: Show why (explain current step)"
+      },
+      {
+        "command": "bbb.applyStep",
+        "title": "BBB: Apply current step for me"
+      },
+      {
+        "command": "bbb.showValidationReason",
+        "title": "BBB: Show why this step can't advance"
+      },
+      {
+        "command": "bbb.toggleComprehension",
+        "title": "BBB: Toggle comprehension mode"
+      },
+      {
+        "command": "bbb.explainSelection",
+        "title": "BBB: Explain the highlighted selection"
       }
     ],
     "keybindings": [
@@ -56,6 +92,44 @@
         "command": "bbb.resume",
         "key": "ctrl+alt+.",
         "mac": "cmd+alt+."
+      },
+      {
+        "command": "bbb.rewind",
+        "key": "ctrl+alt+,",
+        "mac": "cmd+alt+,"
+      },
+      {
+        "command": "bbb.toggleInstructions",
+        "key": "alt+z"
+      },
+      {
+        "command": "bbb.skipStep",
+        "key": "ctrl+alt+\\",
+        "mac": "cmd+alt+\\"
+      },
+      {
+        "command": "bbb.showWhy",
+        "key": "ctrl+alt+shift+y",
+        "mac": "cmd+alt+shift+y"
+      },
+      {
+        "command": "bbb.applyStep",
+        "key": "ctrl+alt+shift+u",
+        "mac": "cmd+alt+shift+u"
+      },
+      {
+        "command": "bbb.showValidationReason",
+        "key": "ctrl+alt+y",
+        "mac": "cmd+alt+y"
+      },
+      {
+        "command": "bbb.toggleComprehension",
+        "key": "alt+shift+c"
+      },
+      {
+        "command": "bbb.explainSelection",
+        "key": "alt+shift+y",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {
