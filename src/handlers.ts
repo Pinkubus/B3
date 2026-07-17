@@ -20,7 +20,9 @@ export interface HandlerContext {
     terminalExecutionsSince(snapshot: number): string[];
 }
 
-export type VerifyResult = { ok: true } | { ok: false; reason: string };
+export type VerifyResult =
+    | { ok: true }
+    | { ok: false; reason: string; detail?: string; diff?: { actual: string; expected: string } };
 
 export interface StepHandler<S extends PlaybookStep = PlaybookStep> {
     /** Optional setup before the prompt is shown (e.g. edit step inserts the explanation). */
@@ -200,9 +202,12 @@ export const terminalHandler: StepHandler<TerminalStep> = {
         const wanted = step.body.trim();
         const matched = since.some((cmd) => cmd.includes(wanted) || wanted.includes(cmd));
         if (!matched) {
+            const lastCmd = since[since.length - 1];
             return {
                 ok: false,
-                reason: `last command was \`${truncate(since[since.length - 1], 40)}\`, expected something like \`${truncate(wanted, 40)}\``,
+                reason: `last command was \`${truncate(lastCmd, 40)}\`, expected \`${truncate(wanted, 40)}\``,
+                detail: `Your command:\n${lastCmd}\n\nExpected:\n${wanted}`,
+                diff: { actual: lastCmd, expected: wanted },
             };
         }
         return { ok: true };

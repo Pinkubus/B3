@@ -406,11 +406,25 @@ export class PlaybookRunner {
             void vscode.window.showInformationMessage(
                 "BBB: step is already satisfied — press Ctrl+Alt+. to advance.",
             );
-        } else {
-            void vscode.window.showWarningMessage(
-                `BBB: Cannot advance — ${result.reason}`,
-                { modal: true },
-                "OK",
+            return;
+        }
+        const buttons: string[] = result.diff ? ["Show Diff", "OK"] : ["OK"];
+        const pick = await vscode.window.showWarningMessage(
+            "BBB: Cannot advance",
+            { modal: true, detail: result.detail ?? result.reason },
+            ...buttons,
+        );
+        if (pick === "Show Diff" && result.diff) {
+            const { actual, expected } = result.diff;
+            const [actualDoc, expectedDoc] = await Promise.all([
+                vscode.workspace.openTextDocument({ content: actual, language: "shellscript" }),
+                vscode.workspace.openTextDocument({ content: expected, language: "shellscript" }),
+            ]);
+            await vscode.commands.executeCommand(
+                "vscode.diff",
+                actualDoc.uri,
+                expectedDoc.uri,
+                "Terminal diff: Yours ↔ Expected",
             );
         }
     }

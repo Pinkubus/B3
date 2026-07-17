@@ -38,6 +38,12 @@ The file is a numbered markdown list. Each list item is one step. The action is 
 - `indent` (optional, default 0): leading-space count required at the start of the body's first line.
 - The fenced code block body is the **exact** text the user must type. For one statement, one line is best. Multi-line bodies are allowed but discouraged.
 - Every `edit` step **must** be followed by an `<!-- bbb: explain -->` block whose fenced body is plain prose. BBB inserts this as a comment on the line below the typing target *before* prompting, so the user reads it first.
+- **When the playbook is solving a problem, fixing a bug, or investigating an error**, the `explain` block for each step must answer four questions (where applicable):
+  1. **How was this problem found?** — what signal, symptom, or reasoning identified it (e.g. "the stack trace pointed here", "this value is never reset after X").
+  2. **Why is it a problem?** — the root cause in plain terms (e.g. "the list is mutated in-place so every caller shares the same object").
+  3. **What does this step do to fix it?** — the specific change being made and its mechanical effect.
+  4. **Why does this fix work?** — the causal link between the change and the resolution (e.g. "returning a copy means the caller's list is independent, so later mutations don't bleed across").
+  Keep answers concise — two or three sentences per question is ideal. Skip a question only if it genuinely doesn't apply to the step (e.g. a pure diagnostic step has no fix yet).
 
 ### `terminal` — run a command
 
