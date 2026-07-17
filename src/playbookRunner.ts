@@ -322,7 +322,7 @@ export class PlaybookRunner {
         const snap = this.currentSnapshot ?? this.takeSnapshot();
         const handler = handlerFor(step);
 
-        // Open the file and reveal the target line so the user can see where it goes.
+        // Ensure the target line exists (activate no longer navigates).
         try {
             await handler.activate?.(step, this.context(), snap);
         } catch (err) {
@@ -333,6 +333,14 @@ export class PlaybookRunner {
         const offset = snap.lineOffsets[uri.toString()] ?? 0;
         const targetZero = step.line - 1 + offset;
         const doc = await vscode.workspace.openTextDocument(uri);
+
+        // Open the file and navigate to the target line for auto-apply.
+        const applyEditor = await vscode.window.showTextDocument(doc, { preserveFocus: false });
+        applyEditor.selection = new vscode.Selection(targetZero, step.indent, targetZero, step.indent);
+        applyEditor.revealRange(
+            new vscode.Range(targetZero, 0, targetZero, 0),
+            vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+        );
 
         // Verify-before: if the step's content is already present, don't insert a
         // duplicate — just move on.

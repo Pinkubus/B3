@@ -44,6 +44,7 @@ The file is a numbered markdown list. Each list item is one step. The action is 
   3. **What does this step do to fix it?** — the specific change being made and its mechanical effect.
   4. **Why does this fix work?** — the causal link between the change and the resolution (e.g. "returning a copy means the caller's list is independent, so later mutations don't bleed across").
   Keep answers concise — two or three sentences per question is ideal. Skip a question only if it genuinely doesn't apply to the step (e.g. a pure diagnostic step has no fix yet).
+- **Always precede each `edit` step with an `open` step for its target file and a `goto` step for its target line**, so the user practises VS Code navigation. Omit the `open` step only when the immediately preceding step already opened that exact file. The user can press Ctrl+Alt+Shift+U at any edit step to have BBB handle navigation and apply the edit automatically — these steps exist for manual practice, not as gates.
 
 ### `terminal` — run a command
 
@@ -172,3 +173,5 @@ Every `edit` step body must be code you would stake your reputation on. Before a
 5. **Never guess line numbers.** Read the file, count the lines, and use the number you see. Compensate only for blank lines BBB will insert for `explain` comments — not for anything else.
 6. **Sequential inserts shift later line numbers.** When several `edit` steps each insert a new line into the same file, every insert pushes the lines below it down by one. Number each following step for the file state *after* the earlier inserts land (e.g. inserting one line at 172 means the next insertion point that was 497 is now 498).
 7. **One line per `edit` step is ideal for comprehension.** Keep bodies short — single-line where possible. The status bar only shows a short prompt; the teaching happens in `teach` popups and the actual editor, not in a giant status-bar string.
+8. **Keep step descriptions short** — aim for under 50 characters so the status bar shows the full text without paging. Where a longer description is unavoidable, put the detail in the `explain` block instead.
+9. **Do not include keybinding reminders** (e.g. "then press Ctrl+Alt+.") anywhere in step descriptions, `explain` blocks, or `teach` blocks. BBB communicates keybinding guidance in the status bar automatically.

@@ -72,24 +72,12 @@ async function ensureLineExists(doc: vscode.TextDocument, zeroBasedLine: number)
 
 export const editHandler: StepHandler<EditStep> = {
     async activate(step, ctx, snapshot) {
+        // Only ensure the target line exists — navigation is the user's job (or applyCurrentStep's).
         const uri = workspaceUriForFile(ctx.playbookUri, step.file);
         const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preserveFocus: false });
-
         const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
         const targetZero = step.line - 1 + offset;
-
         await ensureLineExists(doc, targetZero);
-
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document.uri.toString() === uri.toString()) {
-            const col = step.indent;
-            editor.selection = new vscode.Selection(targetZero, col, targetZero, col);
-            editor.revealRange(
-                new vscode.Range(targetZero, 0, targetZero, 0),
-                vscode.TextEditorRevealType.InCenterIfOutsideViewport,
-            );
-        }
     },
 
     prompt(step, ctx, snapshot) {
@@ -97,7 +85,7 @@ export const editHandler: StepHandler<EditStep> = {
         const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
         const displayedLine = step.line + offset;
         const indentNote = step.indent > 0 ? ` (indent ${step.indent})` : "";
-        return `Type on line ${displayedLine}${indentNote}: ${step.body} — then Ctrl+Alt+.`;
+        return `Type on line ${displayedLine}${indentNote}: ${step.body}`;
     },
 
     async verify(step, ctx, snapshot) {
@@ -190,7 +178,7 @@ export const editHandler: StepHandler<EditStep> = {
 
 export const terminalHandler: StepHandler<TerminalStep> = {
     prompt(step) {
-        return `Run in a terminal: ${step.body} — then Ctrl+Alt+.`;
+        return `Run: ${step.body}`;
     },
     async verify(step, ctx, snapshot) {
         const since = ctx.terminalExecutionsSince(snapshot.terminalExecCount);
@@ -219,7 +207,7 @@ export const terminalHandler: StepHandler<TerminalStep> = {
 export const reportHandler: StepHandler = {
     prompt(step) {
         const desc = step.description ? ` (${step.description})` : "";
-        return `Paste output back to Copilot${desc} — then Ctrl+Alt+. once it has appended more steps.`;
+        return `Paste output to Copilot${desc}`;
     },
     async verify() {
         return { ok: true };
@@ -231,7 +219,7 @@ export const reportHandler: StepHandler = {
 export const openHandler: StepHandler<OpenStep> = {
     prompt(step, ctx) {
         const shortcut = ctx.keybindings.forCommand("workbench.action.quickOpen");
-        return `Open ${step.file} (try ${shortcut}) — then Ctrl+Alt+.`;
+        return `Open ${step.file} (${shortcut})`;
     },
     async verify(step, ctx) {
         const want = workspaceUriForFile(ctx.playbookUri, step.file).toString();
@@ -248,7 +236,7 @@ export const openHandler: StepHandler<OpenStep> = {
 export const gotoHandler: StepHandler<GotoStep> = {
     prompt(step, ctx) {
         const shortcut = ctx.keybindings.forCommand("workbench.action.gotoLine");
-        return `Go to line ${step.line} (try ${shortcut} then type ${step.line}) — then Ctrl+Alt+.`;
+        return `Go to line ${step.line} (${shortcut}, type ${step.line})`;
     },
     async verify(step) {
         const ed = vscode.window.activeTextEditor;
