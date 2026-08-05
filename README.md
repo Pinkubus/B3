@@ -13,8 +13,8 @@ You install a Copilot-instructions file that says: *"do not edit files; write a 
 1. `npm install` then `npm run compile` (or `npm run watch`).
 2. Press **F5** to launch the Extension Development Host.
 3. In the new window, open a workspace folder.
-4. Run **`BBB: Install Copilot instructions into this workspace`** — writes `.github/copilot-instructions.md`.
-5. Ask Copilot (chat) to do something. It writes `.bbb/playbook.md` instead of editing files.
+4. Run **`BBB: Install Copilot instructions into this workspace`** — writes `.github/copilot-instructions.md` and `.github/prompts/bbb.prompt.md`.
+5. Type `/bbb` in Copilot Chat and ask it to do something. It writes `.bbb/playbook.md` instead of editing files.
 6. Run **`BBB: Start playbook lesson`**. The status bar shows step 1.
 7. Perform the step and press **`Ctrl+Alt+.`** to verify and advance. If verification fails, the reason flashes in the status bar and you stay on the step.
 8. When you hit a `report` step, paste the requested output back to Copilot. Copilot appends more steps; saving the playbook reloads it.

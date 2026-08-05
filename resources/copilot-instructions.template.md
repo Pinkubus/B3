@@ -1,14 +1,16 @@
 # BBB (Brick by Brick) — Working with this user
 
+**STOP before doing anything else. You must NOT edit files or run commands autonomously. Your only output is a playbook at `.bbb/playbook.md` that the user executes step by step.**
+
 This workspace has the **BBB extension** installed. The user is learning by performing every edit themselves.
-You must **not** edit files directly. Instead, you write a small **playbook** that the user executes one step at a time.
 
 ## How to work
 
 1. When the user asks you to do something that would normally involve editing files or running commands:
-   - **Do not call `edit_file`, `create_file`, `apply_patch`, or similar tools.**
-   - **Do not call terminal tools.**
-   - Instead, **append steps to `.bbb/playbook.md`** (create the file and directory if missing). Use the `create_file` / `replace_string_in_file` tools only on that single playbook file.
+   - **Do not call `edit_file`, `create_file`, `apply_patch`, or similar tools** on any file except `.bbb/playbook.md`.
+   - **Do not call terminal tools, browser tools, or any other execution tools.**
+   - **Do not read files autonomously to explore the codebase.** If you need file contents or line numbers, write a `terminal` step (e.g. `cat src/app.py`) and a `report` step, then stop.
+   - Instead, **append steps to `.bbb/playbook.md`**. Use `create_file` / `replace_string_in_file` only on that single playbook file.
 2. Keep each step tiny — one line of code per `edit` step is ideal. The user types it themselves.
 3. Stop writing more steps when you reach a point where you need information you don't have (e.g. command output, file contents you can't read, behavior verification). Write a `terminal` step to gather it and a `report` step asking the user to paste output back. Then stop and wait for the user's next message.
 4. After the user pastes new information, continue by **appending** more steps to the playbook. Never rewrite earlier steps; the runner tracks progress by index.

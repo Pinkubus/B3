@@ -93,16 +93,17 @@ export function activate(context: vscode.ExtensionContext): void {
         log.error("autoStartOnSave setup threw", err);
     }
 
-    // Auto-install Copilot instructions on first activation in any workspace
-    // that doesn't have them yet. Without these, Copilot edits files directly
-    // and BBB has nothing to drive. Controlled by `bbb.autoInstallInstructions`
-    // (default true) so users who don't want this can opt out.
+    // Auto-install Copilot instructions and the /bbb prompt on first activation
+    // in any workspace that doesn't have them yet. Without these, Copilot edits
+    // files directly and BBB has nothing to drive. Controlled by
+    // `bbb.autoInstallInstructions` (default true) so users who don't want this
+    // can opt out.
     try {
         if (vscode.workspace.getConfiguration("bbb").get<boolean>("autoInstallInstructions", true)) {
-            void ensureCopilotInstructions(context);
+            void ensureCopilotCustomizations(context);
         }
     } catch (err) {
-        log.error("auto-install instructions check threw", err);
+        log.error("auto-install Copilot customizations check threw", err);
     }
 
     log.info("activate() complete");
@@ -210,6 +211,11 @@ async function openPlaybook(): Promise<void> {
 
 const BBB_INSTRUCTIONS_MARKER = "# BBB (Brick by Brick) — Working with this user";
 
+async function ensureCopilotCustomizations(context: vscode.ExtensionContext): Promise<void> {
+    await ensureCopilotInstructions(context);
+    await ensureBbbPrompt(context);
+}
+
 /**
  * Silent install used on activation. No prompts, no toasts, no editor opening.
  * - If the file is missing, write the template.
@@ -268,6 +274,39 @@ function readInstructionsTemplate(context: vscode.ExtensionContext): string | nu
     }
 }
 
+function readPromptTemplate(context: vscode.ExtensionContext): string | null {
+    const templatePath = path.join(context.extensionPath, "resources", "bbb.prompt.md");
+    try {
+        return fs.readFileSync(templatePath, "utf8");
+    } catch (err) {
+        log.error("cannot read /bbb prompt template", err);
+        return null;
+    }
+}
+
+async function ensureBbbPrompt(context: vscode.ExtensionContext): Promise<void> {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+        return;
+    }
+    const template = readPromptTemplate(context);
+    if (!template) {
+        return;
+    }
+    const targetDir = vscode.Uri.joinPath(folder.uri, ".github", "prompts");
+    const targetFile = vscode.Uri.joinPath(targetDir, "bbb.prompt.md");
+    try {
+        await vscode.workspace.fs.stat(targetFile);
+        log.info("/bbb prompt already installed; nothing to do", { uri: targetFile.toString() });
+        return;
+    } catch {
+        // missing — fall through to create
+    }
+    await vscode.workspace.fs.createDirectory(targetDir);
+    await vscode.workspace.fs.writeFile(targetFile, new TextEncoder().encode(template));
+    log.info("auto-installed /bbb prompt", { uri: targetFile.toString() });
+}
+
 async function installCopilotInstructions(context: vscode.ExtensionContext): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
@@ -279,6 +318,7 @@ async function installCopilotInstructions(context: vscode.ExtensionContext): Pro
         void vscode.window.showErrorMessage("BBB: cannot read template — see BBB output.");
         return;
     }
+    const promptTemplate = readPromptTemplate(context);
     const targetDir = vscode.Uri.joinPath(folder.uri, ".github");
     const targetFile = vscode.Uri.joinPath(targetDir, "copilot-instructions.md");
     let exists = false;
@@ -311,9 +351,12 @@ async function installCopilotInstructions(context: vscode.ExtensionContext): Pro
         await vscode.workspace.fs.createDirectory(targetDir);
         await vscode.workspace.fs.writeFile(targetFile, new TextEncoder().encode(template));
     }
+    if (promptTemplate) {
+        await ensureBbbPrompt(context);
+    }
     await vscode.window.showTextDocument(targetFile);
     void vscode.window.showInformationMessage(
-        "BBB: Copilot instructions installed. Ask Copilot to do something — it will write a playbook for you to perform.",
+        "BBB: Copilot instructions installed. Use /bbb in Copilot Chat to write a playbook for you to perform.",
     );
 }
 

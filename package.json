@@ -109,8 +109,8 @@
       },
       {
         "command": "bbb.showWhy",
-        "key": "ctrl+alt+shift+y",
-        "mac": "cmd+alt+shift+y"
+        "key": "ctrl+alt+shift+w",
+        "mac": "cmd+alt+shift+w"
       },
       {
         "command": "bbb.applyStep",
@@ -119,12 +119,12 @@
       },
       {
         "command": "bbb.showValidationReason",
-        "key": "ctrl+alt+y",
-        "mac": "cmd+alt+y"
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
       },
       {
         "command": "bbb.toggleComprehension",
-        "key": "alt+shift+c"
+        "key": "ctrl+alt+c"
       },
       {
         "command": "bbb.explainSelection",

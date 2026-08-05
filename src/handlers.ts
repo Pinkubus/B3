@@ -119,19 +119,25 @@ export const editHandler: StepHandler<EditStep> = {
                         reason: `indent should be at least ${step.indent} space${step.indent === 1 ? "" : "s"}, got ${leading}`,
                     };
                 }
-                // Compare what comes after the indent against expectedBody (also trimmed of its own leading ws).
-                const actualAfterIndent = actual.slice(step.indent);
-                if (actualAfterIndent !== expectedBody.replace(/^\s*/, "")) {
+                // Strip the declared indent offset, then also strip any further leading whitespace
+                // that the editor or language formatter added (e.g. attribute continuation lines in
+                // HTML, hanging indents in Python). Trailing whitespace is also ignored so editors
+                // that auto-insert trailing spaces don't cause spurious failures.
+                const actualContent = actual.slice(step.indent).trimStart().trimEnd();
+                const expectedContent = expectedBody.replace(/^\s*/, "").trimEnd();
+                if (actualContent !== expectedContent) {
                     return {
                         ok: false,
-                        reason: `expected \`${truncate(expectedBody, 30)}\`, got \`${truncate(actualAfterIndent, 30)}\``,
+                        reason: `expected \`${truncate(expectedContent, 30)}\`, got \`${truncate(actualContent, 30)}\``,
                     };
                 }
             } else {
-                if (actual !== expectedBody) {
+                // Subsequent lines: normalise trailing whitespace only; the playbook body
+                // already carries the correct leading whitespace for the target language.
+                if (actual.trimEnd() !== expectedBody.trimEnd()) {
                     return {
                         ok: false,
-                        reason: `line ${docLineIdx + 1}: expected \`${truncate(expectedBody, 30)}\`, got \`${truncate(actual, 30)}\``,
+                        reason: `line ${docLineIdx + 1}: expected \`${truncate(expectedBody.trimEnd(), 30)}\`, got \`${truncate(actual.trimEnd(), 30)}\``,
                     };
                 }
             }

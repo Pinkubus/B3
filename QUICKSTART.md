@@ -32,13 +32,13 @@ In the Extension Development Host window:
 2. Open the **Command Palette** (`Ctrl+Shift+P`) and run:  
    **`BBB: Install Copilot instructions into this workspace`**
 
-This writes `.github/copilot-instructions.md` into the workspace. It tells Copilot: *"Don't edit files — write a playbook instead."*
+This writes `.github/copilot-instructions.md` and `.github/prompts/bbb.prompt.md` into the workspace. The prompt makes `/bbb` available in Copilot Chat, and the instructions tell Copilot: *"Don't edit files — write a playbook instead."*
 
 ---
 
 ## 4. Ask Copilot to do something
 
-Open Copilot Chat and ask it to implement anything — add a function, create a file, whatever.  
+Open Copilot Chat and type `/bbb`, then ask it to implement anything — add a function, create a file, whatever.  
 Instead of editing files directly, it will write (or append to) **`.bbb/playbook.md`** with numbered steps.
 
 ---
@@ -70,6 +70,13 @@ When you hit a **`report`** step, paste the requested output back to Copilot in 
 |---|---|
 | `BBB: Start playbook lesson` | Command Palette |
 | `BBB: Verify current step and advance` | `Ctrl+Alt+.` |
+| `BBB: Go back one step` | `Ctrl+Alt+,` |
+| `BBB: Skip current step` | `Ctrl+Alt+\` |
+| `BBB: Apply current step for me` | `Ctrl+Alt+Shift+U` |
+| `BBB: Show why (explain current step)` | `Ctrl+Alt+Shift+W` |
+| `BBB: Show why this step can't advance` | `Ctrl+Alt+R` |
+| `BBB: Toggle comprehension mode` | `Ctrl+Alt+C` |
+| `BBB: Explain the highlighted selection` | `Alt+Shift+Y` (editor focus) |
 | `BBB: Open playbook` | Command Palette |
 | `BBB: Cancel current lesson` | Command Palette |
 
