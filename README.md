@@ -25,24 +25,37 @@ The playbook is a numbered markdown list. Each step has an HTML comment declarin
 
 | Action | Purpose | Verify |
 |---|---|---|
-| `edit file="..." line="N" indent="K"` | Type a code chunk at a target line. Paired with `<!-- bbb: explain -->` whose body BBB renders as a comment on the line *below* the typing target *before* prompting. | Document line matches body (indent ≥ K). |
-| `terminal` | Run a command in any terminal. | Matched against `onDidStartTerminalShellExecution` log; trusts user if shell integration is off. |
+| `edit file="..." line="N" indent="K"` | Type a code chunk at a target line (or after/before a text `anchor`). Paired with `<!-- bbb: explain -->`. | Document line matches body (indent ≥ K). |
+| `replace file="..." line="N"` | Change an existing line. Carries `<!-- bbb: old -->` and `<!-- bbb: new -->` blocks. | Line equals `new` (and was `old` before). |
+| `create file="..."` | Scaffold and open a new empty file (plus parent folders) so later edits have a target. | File exists. |
+| `terminal` | Run a command in any terminal. | Lenient match against `onDidStartTerminalShellExecution` log; trusts user if shell integration is off. |
 | `report` | Paste output back to Copilot. | Always passes — user signals readiness with the keybinding. |
-| `open file="..."` | Navigate to a file. | Active editor URI matches. |
-| `goto line="N"` | Move the cursor. | Cursor line matches. |
-| `note` | Context only. | Always passes. |
+| `open file="..."` | Navigate to a file. | File open in any visible editor group. |
+| `goto line="N"` | Move the cursor. | Cursor within ±2 lines of N. |
+| `validate-section start="N" end="M"` | (Modifier on `edit`) assert a broader line range matches after the edit. | Range matches exactly. |
+| `teach` | (Modifier) pop up a "what you just wrote" explanation when the step completes. | — |
+| `note` | Context only. Add `counted="false"` on nav-only steps. | Always passes. |
 
 Full format spec is in [resources/copilot-instructions.template.md](resources/copilot-instructions.template.md).
 
 ### Commands
 
-| Command | What it does |
+| Command | Shortcut |
 |---|---|
-| `BBB: Install Copilot instructions into this workspace` | Writes the template to `.github/copilot-instructions.md`. |
-| `BBB: Start playbook lesson` | Begins driving the playbook from step 1. |
-| `BBB: Verify current step and advance` | Bound to `Ctrl+Alt+.` (Cmd+Alt+. on Mac). |
-| `BBB: Open playbook` | Opens `.bbb/playbook.md`. |
-| `BBB: Cancel current lesson` | Stops the runner. |
+| `BBB: Install Copilot instructions into this workspace` | Command Palette |
+| `BBB: Start playbook lesson` | Command Palette |
+| `BBB: Verify current step and advance` | `Ctrl+Alt+.` |
+| `BBB: Go back one step` | `Ctrl+Alt+,` |
+| `BBB: Skip current step` | `Ctrl+Alt+\` |
+| `BBB: Apply current step for me` | `Ctrl+Alt+Shift+U` |
+| `BBB: Show why (explain current step)` | `Ctrl+Alt+Shift+W` |
+| `BBB: Show why this step can't advance` | `Ctrl+Alt+R` |
+| `BBB: Toggle comprehension mode` | `Ctrl+Alt+C` |
+| `BBB: Toggle presentation mode (other-screen window)` | `Ctrl+Alt+M` |
+| `BBB: Explain the highlighted selection` | `Alt+Shift+Y` |
+| `BBB: Toggle instruction text` | `Alt+Z` |
+| `BBB: Open playbook` | Command Palette |
+| `BBB: Cancel current lesson` | Command Palette |
 
 ### Settings
 
@@ -63,5 +76,5 @@ For drilling on an arbitrary snippet without involving Copilot: **`BBB: Practice
 
 - VS Code has no public API to intercept Copilot's edit tools; BBB redirects Copilot via its instructions file. Custom modes or user-edited instructions can override this.
 - `onDidStartTerminalShellExecution` requires shell integration. With integration off, terminal steps trust the user.
-- Line-offset tracking assumes only BBB-driven edits modify the file. Manual edits between steps can desync line numbers — cancel and restart if that happens.
+- Line-number targets assume only BBB-driven edits modify the file. Manual edits between steps can desync them — prefer `after`/`before` anchors (drift-proof), or cancel and restart if numbers desync.
 - Format-on-save can rewrite an `edit` step's exact text and trip verification. Disable formatters for the target language during a lesson.

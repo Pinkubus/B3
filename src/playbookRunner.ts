@@ -1,10 +1,11 @@
 import * as vscode from "vscode";
-import { parsePlaybook, PlaybookStep } from "./playbookParser";
+import { parsePlaybook, PlaybookStep, ReplaceStep } from "./playbookParser";
 import {
     handlerFor,
     HandlerContext,
     StepSnapshot,
     workspaceUriForFile,
+    resolveEditTargetZero,
 } from "./handlers";
 import { KeybindingResolver } from "./keybindings";
 import { TeachView } from "./teachView";
@@ -243,9 +244,28 @@ export class PlaybookRunner {
     /** Available chars for the message portion given the fixed prefix rendered in the status bar. */
     private promptPageMax(): number {
         // $(debug-step-over) renders as a single icon glyph, not 18 chars.
-        const raw = `$(debug-step-over) BBB ${this.currentIdx + 1}/${this.steps.length}: `;
+        const raw = `$(debug-step-over) BBB ${this.statusPrefixBody()}: `;
         const visiblePrefix = raw.length - "$(debug-step-over)".length + 1;
         return Math.max(30, PlaybookRunner.PAGE_LENGTH - visiblePrefix);
+    }
+
+    /** 1-based position of the current step among counted (non-nav) steps. */
+    private countedPosition(idx: number): number {
+        return this.steps.slice(0, idx + 1).filter((s) => s.counted).length;
+    }
+
+    /** Total number of counted (non-nav) steps. */
+    private get countedStepsTotal(): number {
+        return this.steps.filter((s) => s.counted).length;
+    }
+
+    /** The "N/total" fraction, or → for a nav-only (uncounted) step. */
+    private statusPrefixBody(): string {
+        const step = this.steps[this.currentIdx];
+        if (step?.counted === false) {
+            return "→";
+        }
+        return `${this.countedPosition(this.currentIdx)}/${this.countedStepsTotal}`;
     }
 
     private updateStatusBar(): void {
@@ -253,7 +273,7 @@ export class PlaybookRunner {
             return;
         }
         const step = this.steps[this.currentIdx];
-        const position = `${this.currentIdx + 1}/${this.steps.length}`;
+        const position = this.statusPrefixBody();
         if (this.presentationModeEnabled) {
             this.statusBar.text = `$(multiple-windows) BBB ${position} — see presentation panel`;
             this.statusBar.tooltip = step.description;
@@ -339,8 +359,12 @@ export class PlaybookRunner {
             return;
         }
         const step = this.steps[this.currentIdx];
+        if (step.kind === "replace") {
+            await this.applyReplaceStep(step);
+            return;
+        }
         if (step.kind !== "edit") {
-            vscode.window.setStatusBarMessage("BBB: auto-apply only works for edit steps", 3000);
+            vscode.window.setStatusBarMessage("BBB: auto-apply only works for edit and replace steps", 3000);
             return;
         }
         const snap = this.currentSnapshot ?? this.takeSnapshot();
@@ -355,8 +379,8 @@ export class PlaybookRunner {
 
         const uri = workspaceUriForFile(this.playbookUri!, step.file);
         const offset = snap.lineOffsets[uri.toString()] ?? 0;
-        const targetZero = step.line - 1 + offset;
         const doc = await vscode.workspace.openTextDocument(uri);
+        const targetZero = resolveEditTargetZero(step, doc, offset);
 
         // Open the file and navigate to the target line for auto-apply.
         const applyEditor = await vscode.window.showTextDocument(doc, { preserveFocus: false });
@@ -421,6 +445,48 @@ export class PlaybookRunner {
         }
 
         // advance() re-verifies (passes), shows the teach note, and moves on.
+        await this.advance();
+    }
+
+    /** Auto-apply a `replace` step: swap the target line's old text for the new. */
+    private async applyReplaceStep(step: ReplaceStep): Promise<void> {
+        const snap = this.currentSnapshot ?? this.takeSnapshot();
+        const handler = handlerFor(step);
+        const uri = workspaceUriForFile(this.playbookUri!, step.file);
+        const offset = snap.lineOffsets[uri.toString()] ?? 0;
+        const targetZero = step.line - 1 + offset;
+        const doc = await vscode.workspace.openTextDocument(uri);
+
+        const pre = await handler.verify(step, this.context(), snap);
+        if (pre.ok) {
+            await this.advance();
+            return;
+        }
+        if (targetZero >= doc.lineCount) {
+            void vscode.window.showWarningMessage(
+                `BBB: line ${targetZero + 1} of ${step.file} doesn't exist — check the playbook.`,
+                { modal: true },
+                "OK",
+            );
+            return;
+        }
+        const editor = await vscode.window.showTextDocument(doc, { preserveFocus: false });
+        const lineRange = doc.lineAt(targetZero).range;
+        editor.revealRange(lineRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        const leading = doc.lineAt(targetZero).text.match(/^(\s*)/)?.[1] ?? "";
+        const wsEdit = new vscode.WorkspaceEdit();
+        wsEdit.replace(uri, lineRange, leading + step.newText.trim());
+        await vscode.workspace.applyEdit(wsEdit);
+
+        const post = await handler.verify(step, this.context(), snap);
+        if (!post.ok) {
+            void vscode.window.showWarningMessage(
+                `BBB: couldn't apply that replace — ${post.reason}.`,
+                { modal: true },
+                "OK",
+            );
+            return;
+        }
         await this.advance();
     }
 

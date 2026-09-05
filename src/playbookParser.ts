@@ -4,6 +4,8 @@
  */
 export type PlaybookStep =
     | EditStep
+    | ReplaceStep
+    | CreateStep
     | TerminalStep
     | ReportStep
     | OpenStep
@@ -17,10 +19,17 @@ interface BaseStep {
     description: string;
     /** Line in the playbook file where this step starts (for error messages). */
     sourceLine: number;
-    /** Why this step matters — shown on demand via Ctrl+Alt+Shift+Y. */
+    /** Why this step matters — shown on demand via Ctrl+Alt+Shift+W. */
     explain: string;
     /** Optional comprehension note shown as a popup right after the user finishes this step. */
     teach?: string;
+    /**
+     * Whether this step counts toward the N/total status-bar fraction. Nav-only
+     * steps (open/goto/note used purely for navigation) set counted="false" so
+     * they render with a → prefix and don't inflate the progress denominator.
+     * Defaults to true.
+     */
+    counted: boolean;
 }
 
 export interface EditStep extends BaseStep {
@@ -34,6 +43,33 @@ export interface EditStep extends BaseStep {
     body: string;
     /** Optional broader code-region assertion verified after the specific line(s) pass. */
     validationSection?: ValidationSection;
+    /**
+     * Optional drift-proof anchor: the exact text of an existing line to insert
+     * AFTER. When set, the insertion point is located by searching for this line
+     * at verify/apply time, and `line` becomes a fallback only. Eliminates the
+     * whole class of cross-step line-number-drift bugs.
+     */
+    after?: string;
+    /** Optional anchor: insert BEFORE the line whose text matches this. */
+    before?: string;
+}
+
+/** Replace an existing single line with new text (verified before and after). */
+export interface ReplaceStep extends BaseStep {
+    kind: "replace";
+    file: string;
+    /** 1-based line whose content will change. */
+    line: number;
+    /** The exact text the line must currently hold (guards against drift). */
+    oldText: string;
+    /** The exact text the line must hold after the edit. */
+    newText: string;
+}
+
+/** Create (and open) a new empty file so later edit steps have somewhere to type. */
+export interface CreateStep extends BaseStep {
+    kind: "create";
+    file: string;
 }
 
 /** Specifies a range of lines in a file that must match exactly after an edit step completes. */
@@ -211,10 +247,10 @@ function parseStepBlock(
         return null;
     }
 
-    // The first non-explain, non-validate-section, non-teach block is the action.
-    const actionBlock = bbb.find(
-        (b) => b.action !== "explain" && b.action !== "validate-section" && b.action !== "teach",
-    );
+    // The action is the first block that isn't a modifier block (explain,
+    // validate-section, teach) or a replace sub-block (old, new).
+    const MODIFIER_ACTIONS = new Set(["explain", "validate-section", "teach", "old", "new"]);
+    const actionBlock = bbb.find((b) => !MODIFIER_ACTIONS.has(b.action));
     if (!actionBlock) {
         warnings.push(`Line ${block.sourceLine}: step has only 'explain' but no action; skipped.`);
         return null;
@@ -228,12 +264,16 @@ function parseStepBlock(
     const teachBlock = bbb.find((b) => b.action === "teach");
     const teach = teachBlock?.body ?? teachBlock?.attrs.text ?? undefined;
 
+    // A step is nav-only (uncounted) when it carries counted="false".
+    const counted = actionBlock.attrs.counted !== "false";
+
     const base = {
         index,
         description: block.description,
         sourceLine: block.sourceLine,
         explain,
         teach,
+        counted,
     };
 
     switch (actionBlock.action) {
@@ -274,7 +314,43 @@ function parseStepBlock(
                 indent: Number.isFinite(indent) ? indent : 0,
                 body: actionBlock.body,
                 validationSection,
+                after: actionBlock.attrs.after,
+                before: actionBlock.attrs.before,
             };
+        }
+        case "replace": {
+            const file = actionBlock.attrs.file;
+            const line = Number(actionBlock.attrs.line);
+            if (!file || !Number.isInteger(line) || line < 1) {
+                warnings.push(
+                    `Line ${block.sourceLine}: 'replace' requires file="..." and line="N" (1-based).`,
+                );
+                return null;
+            }
+            const oldBlock = bbb.find((b) => b.action === "old");
+            const newBlock = bbb.find((b) => b.action === "new");
+            if (oldBlock?.body == null || newBlock?.body == null) {
+                warnings.push(
+                    `Line ${block.sourceLine}: 'replace' requires an <!-- bbb: old --> and <!-- bbb: new --> fenced block.`,
+                );
+                return null;
+            }
+            return {
+                ...base,
+                kind: "replace",
+                file,
+                line,
+                oldText: oldBlock.body,
+                newText: newBlock.body,
+            };
+        }
+        case "create": {
+            const file = actionBlock.attrs.file;
+            if (!file) {
+                warnings.push(`Line ${block.sourceLine}: 'create' requires file="...".`);
+                return null;
+            }
+            return { ...base, kind: "create", file };
         }
         case "terminal": {
             if (actionBlock.body === null) {

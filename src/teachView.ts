@@ -2,9 +2,9 @@ import * as vscode from "vscode";
 
 /**
  * A reusable webview panel that shows the comprehension ("teach") note for the
- * step the user just finished. Code inside the note is syntax-highlighted with
- * the same palette as DoubleChecker's flashcards.py, but the panel itself is
- * styled to read like a plain message window.
+ * step the user just finished. Code inside the note is syntax-highlighted with a
+ * VS Code–style palette, but the panel itself is styled to read like a plain
+ * message window.
  */
 export class TeachView {
     private panel: vscode.WebviewPanel | null = null;
@@ -32,7 +32,7 @@ export class TeachView {
     }
 }
 
-// ── syntax palette (mirrors flashcards.py) ──────────────────────────────────
+// ── syntax palette ─────────────────────────────────────────────────────────────
 
 const COLORS = {
     keyword: "#569cd6",

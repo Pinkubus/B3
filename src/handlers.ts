@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
-import { PlaybookStep, EditStep, TerminalStep, OpenStep, GotoStep } from "./playbookParser";
+import { PlaybookStep, EditStep, ReplaceStep, CreateStep, TerminalStep, OpenStep, GotoStep } from "./playbookParser";
 import { KeybindingResolver } from "./keybindings";
 
 /**
@@ -68,6 +68,30 @@ async function ensureLineExists(doc: vscode.TextDocument, zeroBasedLine: number)
     await vscode.workspace.applyEdit(edit);
 }
 
+/**
+ * Resolve the 0-based line index an edit targets. When the step carries an
+ * `after`/`before` text anchor, locate that line dynamically so cross-step line
+ * drift can never break placement; otherwise fall back to the declared 1-based
+ * line plus any tracked offset.
+ */
+export function resolveEditTargetZero(
+    step: EditStep,
+    doc: vscode.TextDocument,
+    offset: number,
+): number {
+    const anchor = step.after ?? step.before;
+    if (anchor) {
+        const want = anchor.trim();
+        for (let i = 0; i < doc.lineCount; i++) {
+            if (doc.lineAt(i).text.trim() === want) {
+                return step.after ? i + 1 : i;
+            }
+        }
+        // Anchor not present yet (file not built this far) — fall back to line number.
+    }
+    return step.line - 1 + offset;
+}
+
 // ---------- edit ----------
 
 export const editHandler: StepHandler<EditStep> = {
@@ -76,15 +100,18 @@ export const editHandler: StepHandler<EditStep> = {
         const uri = workspaceUriForFile(ctx.playbookUri, step.file);
         const doc = await vscode.workspace.openTextDocument(uri);
         const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
-        const targetZero = step.line - 1 + offset;
+        const targetZero = resolveEditTargetZero(step, doc, offset);
         await ensureLineExists(doc, targetZero);
     },
 
     prompt(step, ctx, snapshot) {
         const uri = workspaceUriForFile(ctx.playbookUri, step.file);
         const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
-        const displayedLine = step.line + offset;
         const indentNote = step.indent > 0 ? ` (indent ${step.indent})` : "";
+        if (step.after) {
+            return `Type after \`${truncate(step.after.trim(), 24)}\`${indentNote}: ${step.body}`;
+        }
+        const displayedLine = step.line + offset;
         return `Type on line ${displayedLine}${indentNote}: ${step.body}`;
     },
 
@@ -97,7 +124,7 @@ export const editHandler: StepHandler<EditStep> = {
             return { ok: false, reason: `cannot open ${step.file}` };
         }
         const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
-        const targetZero = step.line - 1 + offset;
+        const targetZero = resolveEditTargetZero(step, doc, offset);
         if (targetZero >= doc.lineCount) {
             return { ok: false, reason: `line ${targetZero + 1} doesn't exist yet` };
         }
@@ -175,7 +202,7 @@ export const editHandler: StepHandler<EditStep> = {
                     diffIdx < expectedLines.length || diffIdx < actualSplit.length
                         ? `line ${start + diffIdx}: expected \`${truncate(expectedLines[diffIdx] ?? "(end)", 30)}\`, got \`${truncate(actualSplit[diffIdx] ?? "(end)", 30)}\``
                         : "length mismatch";
-                return { ok: false, reason: `code section mismatch — ${hint} (press Ctrl+Alt+Y for details)` };
+                return { ok: false, reason: `code section mismatch — ${hint} (press Ctrl+Alt+R for details)` };
             }
         }
         return { ok: true };
@@ -195,7 +222,7 @@ export const terminalHandler: StepHandler<TerminalStep> = {
             return { ok: true };
         }
         const wanted = step.body.trim();
-        const matched = since.some((cmd) => cmd.includes(wanted) || wanted.includes(cmd));
+        const matched = since.some((cmd) => commandsMatch(cmd, wanted));
         if (!matched) {
             const lastCmd = since[since.length - 1];
             return {
@@ -230,11 +257,84 @@ export const openHandler: StepHandler<OpenStep> = {
     },
     async verify(step, ctx) {
         const want = workspaceUriForFile(ctx.playbookUri, step.file).toString();
-        const got = vscode.window.activeTextEditor?.document.uri.toString();
-        if (got !== want) {
+        // Accept the file being open in ANY visible editor group, not only the
+        // focused one — splits and preview tabs shouldn't strand the learner.
+        const open =
+            vscode.window.activeTextEditor?.document.uri.toString() === want ||
+            vscode.window.visibleTextEditors.some((e) => e.document.uri.toString() === want);
+        if (!open) {
             return { ok: false, reason: `active editor is not ${step.file}` };
         }
         return { ok: true };
+    },
+};
+
+// ---------- create ----------
+
+export const createHandler: StepHandler<CreateStep> = {
+    async activate(step, ctx) {
+        // Scaffold the file (and any parent folders) so the following edit steps
+        // always have a real target to type into. Creating an empty file is pure
+        // boilerplate, not a teaching moment, so BBB does it for the learner.
+        const uri = workspaceUriForFile(ctx.playbookUri, step.file);
+        try {
+            await vscode.workspace.fs.stat(uri);
+        } catch {
+            await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, ".."));
+            await vscode.workspace.fs.writeFile(uri, new Uint8Array());
+        }
+        const doc = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(doc, { preserveFocus: false });
+    },
+    prompt(step) {
+        return `Create and open ${step.file}`;
+    },
+    async verify(step, ctx) {
+        const uri = workspaceUriForFile(ctx.playbookUri, step.file);
+        try {
+            await vscode.workspace.fs.stat(uri);
+        } catch {
+            return { ok: false, reason: `${step.file} does not exist yet` };
+        }
+        return { ok: true };
+    },
+};
+
+// ---------- replace ----------
+
+export const replaceHandler: StepHandler<ReplaceStep> = {
+    prompt(step, ctx, snapshot) {
+        const uri = workspaceUriForFile(ctx.playbookUri, step.file);
+        const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
+        return `Change line ${step.line + offset} to: ${step.newText}`;
+    },
+    async verify(step, ctx, snapshot) {
+        const uri = workspaceUriForFile(ctx.playbookUri, step.file);
+        let doc: vscode.TextDocument;
+        try {
+            doc = await vscode.workspace.openTextDocument(uri);
+        } catch {
+            return { ok: false, reason: `cannot open ${step.file}` };
+        }
+        const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
+        const targetZero = step.line - 1 + offset;
+        if (targetZero >= doc.lineCount) {
+            return { ok: false, reason: `line ${targetZero + 1} doesn't exist` };
+        }
+        const actual = doc.lineAt(targetZero).text.trim();
+        if (actual === step.newText.trim()) {
+            return { ok: true };
+        }
+        if (actual === step.oldText.trim()) {
+            return {
+                ok: false,
+                reason: `still the old line — change it to \`${truncate(step.newText.trim(), 30)}\``,
+            };
+        }
+        return {
+            ok: false,
+            reason: `line ${targetZero + 1} is \`${truncate(actual, 22)}\`, expected \`${truncate(step.newText.trim(), 22)}\``,
+        };
     },
 };
 
@@ -250,7 +350,10 @@ export const gotoHandler: StepHandler<GotoStep> = {
         if (!ed) {
             return { ok: false, reason: "no active editor" };
         }
-        if (ed.selection.active.line !== step.line - 1) {
+        // Allow a small tolerance — auto-format/scroll can nudge the cursor a line
+        // or two, and stranding a beginner on an off-by-one nav step is worse than
+        // being approximate here.
+        if (Math.abs(ed.selection.active.line - (step.line - 1)) > 2) {
             return {
                 ok: false,
                 reason: `cursor is on line ${ed.selection.active.line + 1}, not ${step.line}`,
@@ -277,6 +380,10 @@ export function handlerFor(step: PlaybookStep): StepHandler {
     switch (step.kind) {
         case "edit":
             return editHandler as StepHandler;
+        case "replace":
+            return replaceHandler as StepHandler;
+        case "create":
+            return createHandler as StepHandler;
         case "terminal":
             return terminalHandler as StepHandler;
         case "report":
@@ -288,6 +395,21 @@ export function handlerFor(step: PlaybookStep): StepHandler {
         case "note":
             return noteHandler;
     }
+}
+
+/** Lenient command comparison so a working terminal step isn't flagged as wrong. */
+function commandsMatch(actual: string, wanted: string): boolean {
+    const a = actual.trim().toLowerCase();
+    const w = wanted.trim().toLowerCase();
+    if (!a || !w) {
+        return false;
+    }
+    if (a.includes(w) || w.includes(a)) {
+        return true;
+    }
+    // Same program (first token, ignoring a leading ./) is close enough.
+    const prog = (s: string) => s.replace(/^\.\//, "").split(/\s+/)[0];
+    return prog(a) === prog(w);
 }
 
 function truncate(s: string, n: number): string {

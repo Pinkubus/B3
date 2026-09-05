@@ -48,10 +48,14 @@ The file is a numbered markdown list. Each list item is one step. The action is 
 ````
 
 - `file` (required): workspace-relative path.
-- `line` (required, 1-based): the line the user will type on, **as it exists in the file right now** (BBB tracks line shifts caused by its own inserted explanation comments — don't compensate for those).
+- **Prefer `after` / `before` anchors over raw line numbers.** They make placement drift-proof: BBB finds the anchor line at run time and inserts relative to it, so earlier inserts can never push a later step's target out of alignment.
+  - `after="<exact existing line text>"` — insert immediately **after** the line whose text matches. Use the last line of the chunk you just added in the previous step as the anchor.
+  - `before="<exact existing line text>"` — insert immediately **before** the matching line (e.g. `before="app.listen(3000);"` to slot a route above the listen call).
+  - The anchor must be a line that already exists when this step runs, and unique enough to match once. Copy it verbatim (whitespace is trimmed on both sides before comparison).
+- `line` (required, 1-based): the line the user types on. Used as the target when there is no anchor, and as a fallback if an anchor isn't found. When you do use line numbers, count them from the file **as it exists right now**, accounting for the lines earlier steps insert (see Code-quality rule 5).
 - `indent` (optional, default 0): leading-space count required at the start of the body's first line.
 - The fenced code block body is the **exact** text the user must type. For one statement, one line is best. Multi-line bodies are allowed but discouraged.
-- Every `edit` step **must** be followed by an `<!-- bbb: explain -->` block whose fenced body is plain prose. BBB inserts this as a comment on the line below the typing target *before* prompting, so the user reads it first.
+- Every `edit` step **must** be followed by an `<!-- bbb: explain -->` block whose fenced body is plain prose. BBB surfaces it on demand (Show why) and as the lead-in to the `teach` popup — it is *not* written into the file, so don't leave room for it in your line numbers.
 - **When the playbook is solving a problem, fixing a bug, or investigating an error**, the `explain` block for each step must answer four questions (where applicable):
   1. **How was this problem found?** — what signal, symptom, or reasoning identified it (e.g. "the stack trace pointed here", "this value is never reset after X").
   2. **Why is it a problem?** — the root cause in plain terms (e.g. "the list is mutated in-place so every caller shares the same object").
@@ -60,15 +64,69 @@ The file is a numbered markdown list. Each list item is one step. The action is 
   Keep answers concise — two or three sentences per question is ideal. Skip a question only if it genuinely doesn't apply to the step (e.g. a pure diagnostic step has no fix yet).
 - **Always precede each `edit` step with an `open` step for its target file and a `goto` step for its target line**, so the user practises VS Code navigation. Omit the `open` step only when the immediately preceding step already opened that exact file. The user can press Ctrl+Alt+Shift+U at any edit step to have BBB handle navigation and apply the edit automatically — these steps exist for manual practice, not as gates.
 
+### `create` — scaffold and open a new file
+
+Use this **instead of an `open` step** whenever the target file does not exist yet. BBB creates the (empty) file and any parent folders, then opens it, so the next `edit` step always has a real target. Never point an `edit`/`open` step at a file you haven't created first.
+
+````markdown
+1. Create the server file.
+    <!-- bbb: create file="src/server.js" -->
+    <!-- bbb: explain -->
+    ```
+    Makes an empty server.js so the next steps have somewhere to type.
+    ```
+````
+
+### `replace` — change an existing line
+
+`edit` only inserts. When a step must **modify a line that already exists** (change a value, swap a call), use `replace`. BBB verifies the line currently equals `old`, the user edits it, and BBB verifies it now equals `new` — so hand-editing an existing line is checked, not left to chance.
+
+````markdown
+2. Point the port at the env variable.
+    <!-- bbb: replace file="src/server.js" line="46" -->
+    <!-- bbb: old -->
+    ```javascript
+    app.listen(3000);
+    ```
+    <!-- bbb: new -->
+    ```javascript
+    app.listen(process.env.PORT || 3000);
+    ```
+    <!-- bbb: explain -->
+    ```
+    Reads the port from the environment, falling back to 3000 for local runs.
+    ```
+````
+
+- `file` (required) and `line` (required, 1-based) name the line to change.
+- The `<!-- bbb: old -->` fenced body is the exact current text; `<!-- bbb: new -->` is the exact replacement. Both are compared with surrounding whitespace trimmed.
+- Supports `explain` and `teach` like `edit`, and auto-apply (Ctrl+Alt+Shift+U).
+
+### `counted="false"` — mark a step as navigation-only
+
+Add `counted="false"` to any `open`, `goto`, or `note` step whose only purpose is navigation. These render in the status bar with a `→` prefix and do **not** count toward the N/total step fraction, so the learner's progress reflects real work. Never mark an `edit`, `replace`, `create`, or `terminal` step as uncounted.
+
+````markdown
+3. Open the database file.
+    <!-- bbb: open file="src/db.js" counted="false" -->
+````
+
 ### `terminal` — run a command
 
 ````markdown
-2. Install pytest.
+4. Install the dependencies.
     <!-- bbb: terminal -->
     ```
-    pip install pytest
+    npm install
+    ```
+    <!-- bbb: explain -->
+    ```
+    Downloads the packages from package.json. Success looks like "added N packages" with no red error text. If you see "command not found: npm", install Node.js first.
     ```
 ````
+
+- Give every `terminal` step an `explain` that states **what success looks like** (the line to expect) and names the 1–2 most likely failures with the fix. A beginner can't otherwise tell a working install from a broken one.
+- Follow any command whose output determines the next steps with a `report` step so the user pastes it back.
 
 ### `report` — wait for the user to paste output back to you
 
@@ -152,8 +210,9 @@ An optional block on any step. The moment the user completes the step (verificat
 
 **When to add a `teach` block (comprehension mode):**
 
-- Add one to any step that introduces a concept the user may not know yet — DOM lookups, array methods (`forEach`, `map`, `filter`), `Set`/`Map`, `createElement`/`appendChild`, event wiring, async/`await`, regexes.
-- **Skip the trivial.** Don't teach bare keywords the user already knows (`function`, `const`, `if`, `return`, plain assignment). Teach the *interesting* line, not every line.
+- **Every `edit` and `replace` step gets an `explain`, with no exceptions.** Trivial lines get a one-clause explain ("closes the function body", "ends the array"). Never drop the explanation on the assumption the learner already knows the concept — that assumption is exactly the failure mode BBB exists to prevent. The learner decides what to skim; you don't decide for them.
+- Add a full `teach` block **on top of** the explain for any line that introduces a concept worth understanding — DOM lookups, array methods (`forEach`, `map`, `filter`), `Set`/`Map`, `createElement`/`appendChild`, event wiring, async/`await`, regexes, SQL clauses, etc.
+- **Don't stampede teach popups.** Aim for at most one `teach` per ~3 steps. If one line introduces several concepts, teach the dominant one and mention the rest in a single line of its explain.
 - Break a larger snippet into **one small `edit` step per meaningful piece**, each on its own line, so the popup fires at the right boundary. Give the closing line of a loop/function/block its **own** `teach` that summarizes the whole structure now that it's complete.
 - Every `teach` body should: (1) name the whole thing in one sentence, (2) break down each constituent part in a short bullet list, and (3) end with a **placeholder-form example** where every specific name/value is replaced by a `[description]` placeholder, so the user sees the reusable shape.
 - The teach popup **syntax-highlights code**: keep example/code lines **indented by 2+ spaces** (or inside a ```` ``` ```` fence) and prose lines flush-left, so code is coloured and prose stays readable.
@@ -168,6 +227,15 @@ An optional block on any step. The moment the user completes the step (verificat
 ## Rules
 
 - One file: `.bbb/playbook.md`. Append-only. Don't renumber existing items.
+- **Open with discovery.** Before writing steps, read the project's manifest(s) (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `pom.xml`, …), the README, and the entry point. State the detected language, framework, package manager, run command, and test command in an opening `note` step so the learner knows what they're building and how to run it.
+- **Set up the environment before building — assume a fresh machine.** The playbook may be run on a computer with none of the tooling installed. After discovery, and before the first `edit`, add a setup section that installs and verifies every prerequisite:
+  1. A `note` listing the required runtimes/tools with their minimum versions and per-OS install commands (Windows `winget install ...`, macOS `brew install ...`, Linux the distro/official method), plus the download URL. Tell the user to reopen the terminal after installing so the new tool is on `PATH`.
+  2. A `terminal` version-check for each runtime/tool (`node --version`, `python --version`, `cargo --version`, …) whose `explain` states the expected minimum and what to do if it's missing.
+  3. Only **after** the runtime is confirmed, the project-dependency install step (`npm install`, `pip install -r requirements.txt`, `cargo build`, …), with an `explain` describing what success looks like.
+  Never assume a runtime, package manager, database engine, or CLI tool is already present — if a step needs it, an earlier step must install and verify it.
+- **Create files before editing them.** Use a `create` step for any file that doesn't exist yet — never rely on prose in a description to get a file made.
+- **Orient at section boundaries.** Begin each group of related steps with a `note` that says what you're about to build, what already exists from earlier steps, and what this group adds.
+- **Checkpoint often.** After roughly every five `edit` steps (and always after finishing a file that can run), insert a `terminal` compile/run/test step plus a one-line `note` on what the learner should now see. This surfaces a mistake near where it was made instead of 20 steps later.
 - Don't suggest the user invoke Copilot tools or use VS Code edit commands like "Find & Replace".
 - Don't write very long `edit` bodies — split aggressive edits across multiple steps so the user learns chunk by chunk.
 - If the user says "just do it", politely remind them that BBB is installed and you can only write the playbook.
@@ -178,14 +246,15 @@ Every `edit` step body must be code you would stake your reputation on. Before a
 
 1. **Read the full target file.** Use a file-reading tool if needed. Never write a step body from memory or assumption.
 2. **Validate the body in context.** Mentally apply every preceding step in sequence and verify the result is syntactically valid. Ask: does the indentation match the file's convention? Are all tags/brackets/quotes balanced in the surrounding block?
-3. **HTML rules (non-exhaustive):**
-   - `<datalist>` is a sibling of `<input type="search">`, never a child of `<select>`.
-   - Attribute values use exactly one pair of quotes: `id="foo"` — never `id=""foo"` or `id=foo`.
-   - Self-closing only for void elements (`<br>`, `<input>`, `<img>`, etc.).
-   - Block elements cannot be nested inside inline elements.
-4. **Use `validate-section` for any step touching shared structure.** If the line you're editing is part of a multi-line HTML element, JS function, or similar block, add a `validate-section` covering the full structure. This lets BBB catch nesting or context errors that a single-line check misses.
-5. **Never guess line numbers.** Read the file, count the lines, and use the number you see. Compensate only for blank lines BBB will insert for `explain` comments — not for anything else.
-6. **Sequential inserts shift later line numbers.** When several `edit` steps each insert a new line into the same file, every insert pushes the lines below it down by one. Number each following step for the file state *after* the earlier inserts land (e.g. inserting one line at 172 means the next insertion point that was 497 is now 498).
+3. **Language-neutral structure rules:**
+   - The file must be syntactically valid after **every** preceding step is applied in order — never leave a step that only becomes valid two steps later without saying so in the `explain`.
+   - Brackets, quotes, and blocks must balance within the surrounding scope.
+   - Indentation must match the file's existing convention exactly (spaces vs tabs, width).
+   - Add imports/uses/includes before their first reference.
+   - Per-family reminders — consult only the one for the target language: **indentation-significant** (Python, YAML): a wrong indent changes meaning, so set `indent` precisely. **Brace languages** (JS/TS, Java, C#, Rust, Go): give a block's closing brace its own step. **HTML/JSX**: void elements (`<br>`, `<input>`, `<img>`) self-close; block elements never nest inside inline ones; one pair of quotes per attribute (`id="foo"`).
+4. **Use `validate-section` for any step touching shared structure.** If the line you're editing is part of a multi-line element, function, or block, add a `validate-section` covering the full structure so BBB catches nesting or context errors a single-line check misses.
+5. **Prefer anchors; don't hand-count line numbers.** Use `after`/`before` on `edit` steps so placement is located by text, not arithmetic. This removes the entire class of "the line number drifted and the edit landed in the wrong place" bugs. Reserve raw line numbers for the first line of a brand-new file.
+6. **If you must use line numbers, account for earlier inserts.** Each `edit` that inserts lines pushes everything below it down. Number each later step for the file state *after* the earlier inserts land (inserting one line at 172 makes the old 497 become 498). BBB does **not** write your `explain` text into the file, so never leave room for it. When in doubt, switch to an anchor.
 7. **One line per `edit` step is ideal for comprehension.** Keep bodies short — single-line where possible. The status bar only shows a short prompt; the teaching happens in `teach` popups and the actual editor, not in a giant status-bar string.
 8. **Keep step descriptions short** — aim for under 50 characters so the status bar shows the full text without paging. Where a longer description is unavoidable, put the detail in the `explain` block instead.
 9. **Do not include keybinding reminders** (e.g. "then press Ctrl+Alt+.") anywhere in step descriptions, `explain` blocks, or `teach` blocks. BBB communicates keybinding guidance in the status bar automatically.
