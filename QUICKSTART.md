@@ -76,9 +76,28 @@ When you hit a **`report`** step, paste the requested output back to Copilot in 
 | `BBB: Show why (explain current step)` | `Ctrl+Alt+Shift+W` |
 | `BBB: Show why this step can't advance` | `Ctrl+Alt+R` |
 | `BBB: Toggle comprehension mode` | `Ctrl+Alt+C` |
+| `BBB: Toggle presentation mode (other-screen window)` | `Ctrl+Alt+M` |
 | `BBB: Explain the highlighted selection` | `Alt+Shift+Y` (editor focus) |
 | `BBB: Open playbook` | Command Palette |
 | `BBB: Cancel current lesson` | Command Palette |
+
+---
+
+## Presentation mode (second monitor)
+
+Press **`Ctrl+Alt+M`** to toggle presentation mode. When on, the status bar
+shrinks to a compact position indicator and the full, untruncated
+instructions for the current step render instead in a separate **"BBB —
+Instructions"** panel. Drag that panel's tab out to a second monitor to
+detach it into its own window — it keeps updating in place as you press
+`Ctrl+Alt+.` to advance, so the editor stays on one screen and the
+instructions stay on the other.
+
+While presentation mode is on, `BBB: Show why this step can't advance` also
+renders into that panel instead of a modal, and `BBB: Explain the
+highlighted selection` opens VS Code's Chat panel (also dockable to a second
+monitor) instead of the in-editor inline chat overlay.
+
 
 ---
 

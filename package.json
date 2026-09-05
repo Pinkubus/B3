@@ -83,6 +83,10 @@
         "title": "BBB: Toggle comprehension mode"
       },
       {
+        "command": "bbb.togglePresentationMode",
+        "title": "BBB: Toggle presentation mode (other-screen window)"
+      },
+      {
         "command": "bbb.explainSelection",
         "title": "BBB: Explain the highlighted selection"
       }
@@ -125,6 +129,11 @@
       {
         "command": "bbb.toggleComprehension",
         "key": "ctrl+alt+c"
+      },
+      {
+        "command": "bbb.togglePresentationMode",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m"
       },
       {
         "command": "bbb.explainSelection",

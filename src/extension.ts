@@ -66,6 +66,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand("bbb.applyStep", () => guard("applyStep", () => runner?.applyCurrentStep())),
             vscode.commands.registerCommand("bbb.showValidationReason", () => guard("showValidationReason", () => runner?.showValidationReason())),
             vscode.commands.registerCommand("bbb.toggleComprehension", () => guard("toggleComprehension", () => runner?.toggleComprehension())),
+            vscode.commands.registerCommand("bbb.togglePresentationMode", () => guard("togglePresentationMode", () => runner?.togglePresentationMode())),
             vscode.commands.registerCommand("bbb.explainSelection", () => guard("explainSelection", explainSelection)),
         );
         log.info("commands registered");
@@ -185,6 +186,13 @@ async function explainSelection(): Promise<void> {
     }
     const question =
         "What is this? Explain what the entire highlighted selection does, then break down what each of its constituent parts does.";
+    if (runner?.presentationModeActive) {
+        // Inline chat renders as an in-editor overlay with no API to redirect its
+        // output elsewhere, so route through the dockable Chat panel instead —
+        // the user can drag that to the second monitor alongside the BBB panel.
+        await vscode.commands.executeCommand("workbench.action.chat.open", question);
+        return;
+    }
     try {
         await vscode.commands.executeCommand("inlineChat.start", {
             message: question,

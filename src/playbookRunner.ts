@@ -8,6 +8,7 @@ import {
 } from "./handlers";
 import { KeybindingResolver } from "./keybindings";
 import { TeachView } from "./teachView";
+import { PresentationView } from "./presentationView";
 import { log } from "./log";
 
 /**
@@ -31,11 +32,15 @@ export class PlaybookRunner {
     private currentPage: number = 0;
     private instructionsVisible: boolean = true;
     private teachView = new TeachView();
+    private presentationView = new PresentationView();
     private globalState: vscode.Memento;
     private comprehensionEnabled: boolean;
+    private presentationModeEnabled: boolean;
 
     /** globalState key persisting whether comprehension popups are shown. */
     private static readonly COMPREHENSION_KEY = "bbb.comprehensionEnabled";
+    /** globalState key persisting whether presentation mode is on. */
+    private static readonly PRESENTATION_KEY = "bbb.presentationModeEnabled";
 
     /** Target max for the total visible status-bar text (prefix + message). */
     private static readonly PAGE_LENGTH = 60;
@@ -46,6 +51,10 @@ export class PlaybookRunner {
         this.comprehensionEnabled = globalState.get<boolean>(
             PlaybookRunner.COMPREHENSION_KEY,
             true,
+        );
+        this.presentationModeEnabled = globalState.get<boolean>(
+            PlaybookRunner.PRESENTATION_KEY,
+            false,
         );
         this.statusBar = vscode.window.createStatusBarItem(
             vscode.StatusBarAlignment.Left,
@@ -113,11 +122,7 @@ export class PlaybookRunner {
         if (idx >= this.steps.length) {
             this.currentIdx = this.steps.length;
             this.finished = true;
-            this.statusBar.text = "$(check) BBB lesson complete";
-            this.statusBar.tooltip = "All steps were already applied. Edit the playbook and save to add more.";
-            if (this.instructionsVisible) {
-                this.statusBar.show();
-            }
+            this.showFinished("All steps were already applied. Edit the playbook and save to add more.");
             log.info("startup: all steps already complete");
             return;
         }
@@ -198,16 +203,24 @@ export class PlaybookRunner {
             const { added } = await this.reload();
             if (added <= 0) {
                 this.finished = true;
-                this.statusBar.text = "$(check) BBB lesson complete";
-                this.statusBar.tooltip = "Waiting for more steps. Edit the playbook and save to continue.";
-                if (this.instructionsVisible) {
-                    this.statusBar.show();
-                }
+                this.showFinished("Waiting for more steps. Edit the playbook and save to continue.");
                 return;
             }
         }
 
         await this.activateCurrent();
+    }
+
+    /** Set the status bar (and presentation panel, if on) to the shared "lesson complete" state. */
+    private showFinished(tooltip: string): void {
+        this.statusBar.text = "$(check) BBB lesson complete";
+        this.statusBar.tooltip = tooltip;
+        if (this.instructionsVisible) {
+            this.statusBar.show();
+        }
+        if (this.presentationModeEnabled) {
+            this.presentationView.showFinished(tooltip);
+        }
     }
 
     private async activateCurrent(): Promise<void> {
@@ -240,9 +253,20 @@ export class PlaybookRunner {
             return;
         }
         const step = this.steps[this.currentIdx];
+        const position = `${this.currentIdx + 1}/${this.steps.length}`;
+        if (this.presentationModeEnabled) {
+            this.statusBar.text = `$(multiple-windows) BBB ${position} — see presentation panel`;
+            this.statusBar.tooltip = step.description;
+            this.statusBar.show();
+            const handler = handlerFor(step);
+            const snapshot = this.currentSnapshot ?? this.takeSnapshot();
+            const fullPrompt = handler.prompt(step, this.context(), snapshot);
+            this.presentationView.showStep(position, step.description, fullPrompt);
+            return;
+        }
         const page = this.pages[this.currentPage];
         const pageTag = this.pages.length > 1 ? ` (${this.currentPage + 1}/${this.pages.length})` : "";
-        this.statusBar.text = `$(debug-step-over) BBB ${this.currentIdx + 1}/${this.steps.length}: ${page}${pageTag}`;
+        this.statusBar.text = `$(debug-step-over) BBB ${position}: ${page}${pageTag}`;
         this.statusBar.tooltip = step.description;
         this.statusBar.show();
     }
@@ -400,7 +424,10 @@ export class PlaybookRunner {
         await this.advance();
     }
 
-    /** Show why the current step's verification is failing (shown as a modal). */
+    /**
+     * Show why the current step's verification is failing. Renders as a modal
+     * normally, or into the presentation panel when presentation mode is on.
+     */
     async showValidationReason(): Promise<void> {
         if (this.currentIdx < 0 || this.currentIdx >= this.steps.length) {
             void vscode.window.showInformationMessage("BBB: no active step.");
@@ -411,9 +438,19 @@ export class PlaybookRunner {
         const snap = this.currentSnapshot ?? this.takeSnapshot();
         const result = await handler.verify(step, this.context(), snap);
         if (result.ok) {
-            void vscode.window.showInformationMessage(
-                "BBB: step is already satisfied — press Ctrl+Alt+. to advance.",
-            );
+            const msg = "BBB: step is already satisfied — press Ctrl+Alt+. to advance.";
+            if (this.presentationModeEnabled) {
+                this.presentationView.showCannotAdvance(msg);
+            } else {
+                void vscode.window.showInformationMessage(msg);
+            }
+            return;
+        }
+        if (this.presentationModeEnabled) {
+            this.presentationView.showCannotAdvance(result.reason, result.detail);
+            if (result.diff) {
+                await this.openDiff(result.diff);
+            }
             return;
         }
         const buttons: string[] = result.diff ? ["Show Diff", "OK"] : ["OK"];
@@ -423,18 +460,22 @@ export class PlaybookRunner {
             ...buttons,
         );
         if (pick === "Show Diff" && result.diff) {
-            const { actual, expected } = result.diff;
-            const [actualDoc, expectedDoc] = await Promise.all([
-                vscode.workspace.openTextDocument({ content: actual, language: "shellscript" }),
-                vscode.workspace.openTextDocument({ content: expected, language: "shellscript" }),
-            ]);
-            await vscode.commands.executeCommand(
-                "vscode.diff",
-                actualDoc.uri,
-                expectedDoc.uri,
-                "Terminal diff: Yours ↔ Expected",
-            );
+            await this.openDiff(result.diff);
         }
+    }
+
+    /** Open a side-by-side diff editor comparing what the user has vs. what's expected. */
+    private async openDiff(diff: { actual: string; expected: string }): Promise<void> {
+        const [actualDoc, expectedDoc] = await Promise.all([
+            vscode.workspace.openTextDocument({ content: diff.actual, language: "shellscript" }),
+            vscode.workspace.openTextDocument({ content: diff.expected, language: "shellscript" }),
+        ]);
+        await vscode.commands.executeCommand(
+            "vscode.diff",
+            actualDoc.uri,
+            expectedDoc.uri,
+            "Terminal diff: Yours ↔ Expected",
+        );
     }
 
     /**
@@ -507,11 +548,7 @@ export class PlaybookRunner {
             const { added } = await this.reload();
             if (added <= 0) {
                 this.finished = true;
-                this.statusBar.text = "$(check) BBB lesson complete";
-                this.statusBar.tooltip = "Waiting for more steps. Edit the playbook and save to continue.";
-                if (this.instructionsVisible) {
-                    this.statusBar.show();
-                }
+                this.showFinished("Waiting for more steps. Edit the playbook and save to continue.");
                 return;
             }
         }
@@ -577,10 +614,45 @@ export class PlaybookRunner {
         log.info("runner.toggleInstructions", { visible: this.instructionsVisible });
     }
 
+    /** Whether "explain"-type actions should render in the presentation panel instead of in-window. */
+    get presentationModeActive(): boolean {
+        return this.presentationModeEnabled;
+    }
+
+    /**
+     * Toggle presentation mode: full instructions render in a persistent,
+     * draggable panel (meant for a second monitor) instead of the status bar.
+     */
+    togglePresentationMode(): void {
+        this.presentationModeEnabled = !this.presentationModeEnabled;
+        void this.globalState.update(
+            PlaybookRunner.PRESENTATION_KEY,
+            this.presentationModeEnabled,
+        );
+        if (this.presentationModeEnabled) {
+            if (this.currentIdx >= 0 && this.currentIdx < this.steps.length) {
+                this.updateStatusBar();
+            } else if (this.finished) {
+                this.presentationView.showFinished("Waiting for more steps. Edit the playbook and save to continue.");
+            }
+        } else {
+            this.presentationView.dispose();
+            if (this.currentIdx >= 0 && this.currentIdx < this.steps.length) {
+                this.updateStatusBar();
+            }
+        }
+        vscode.window.setStatusBarMessage(
+            `BBB: presentation mode ${this.presentationModeEnabled ? "ON — drag the BBB Instructions panel to your second monitor" : "OFF"}`,
+            5000,
+        );
+        log.info("runner.togglePresentationMode", { enabled: this.presentationModeEnabled });
+    }
+
     dispose(): void {
         this.statusBar.dispose();
         this.watcher?.dispose();
         this.teachView.dispose();
+        this.presentationView.dispose();
         for (const s of this.subs) {
             s.dispose();
         }

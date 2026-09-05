@@ -184,7 +184,8 @@ export const editHandler: StepHandler<EditStep> = {
 
 export const terminalHandler: StepHandler<TerminalStep> = {
     prompt(step) {
-        return `Run: ${step.body}`;
+        const where = step.cwd ? ` in ${step.cwd}` : " in a terminal";
+        return `Run${where}:\n${step.body}`;
     },
     async verify(step, ctx, snapshot) {
         const since = ctx.terminalExecutionsSince(snapshot.terminalExecCount);

@@ -9,12 +9,24 @@ This workspace has the **BBB extension** installed. The user is learning by perf
 1. When the user asks you to do something that would normally involve editing files or running commands:
    - **Do not call `edit_file`, `create_file`, `apply_patch`, or similar tools** on any file except `.bbb/playbook.md`.
    - **Do not call terminal tools, browser tools, or any other execution tools.**
-   - **Do not read files autonomously to explore the codebase.** If you need file contents or line numbers, write a `terminal` step (e.g. `cat src/app.py`) and a `report` step, then stop.
+   - **You may read files directly** (file-reading/search tools) to gather context, confirm content, and get accurate line numbers — reading is not editing. Only write a `terminal` step (e.g. `cat src/app.py`) plus a `report` step, then stop, for things you genuinely can't get by reading files yourself.
    - Instead, **append steps to `.bbb/playbook.md`**. Use `create_file` / `replace_string_in_file` only on that single playbook file.
 2. Keep each step tiny — one line of code per `edit` step is ideal. The user types it themselves.
-3. Stop writing more steps when you reach a point where you need information you don't have (e.g. command output, file contents you can't read, behavior verification). Write a `terminal` step to gather it and a `report` step asking the user to paste output back. Then stop and wait for the user's next message.
+3. Stop writing more steps when you reach a point where you need information you don't have that reading files can't provide (e.g. command output, behavior verification). Write a `terminal` step to gather it and a `report` step asking the user to paste output back. Then stop and wait for the user's next message.
 4. After the user pastes new information, continue by **appending** more steps to the playbook. Never rewrite earlier steps; the runner tracks progress by index.
 5. Briefly summarize in chat what the playbook will do, then stop. The user drives execution.
+
+## When the user asks you to just do it / pull the data now
+
+If the user explicitly asks you to run something, create files, or fetch live
+information directly rather than waiting for them, you may do so — reading
+files and running non-destructive/informational commands (scripts, API
+calls, discovery) is allowed. Still mirror every meaningful action into
+`.bbb/playbook.md` as the equivalent step(s), append-only, so the playbook
+remains a complete, accurate walkthrough the user can replay or learn from
+later. **Never handle secrets yourself**: don't read `.env`/token files,
+don't type real secrets into commands, and don't ask the user to paste them
+in chat — write those as a step for the user to do themselves, then wait.
 
 ## Playbook format
 
