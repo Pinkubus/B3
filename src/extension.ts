@@ -222,6 +222,7 @@ const BBB_INSTRUCTIONS_MARKER = "# BBB (Brick by Brick) — Working with this us
 async function ensureCopilotCustomizations(context: vscode.ExtensionContext): Promise<void> {
     await ensureCopilotInstructions(context);
     await ensureBbbPrompt(context);
+    await ensureBbbNoobPrompt(context);
 }
 
 /**
@@ -292,27 +293,49 @@ function readPromptTemplate(context: vscode.ExtensionContext): string | null {
     }
 }
 
-async function ensureBbbPrompt(context: vscode.ExtensionContext): Promise<void> {
+/**
+ * Install one `.github/prompts/<filename>` prompt from a bundled template if it
+ * isn't there yet. Never overwrites — a user's edits to an existing prompt win.
+ */
+async function ensureNamedPrompt(
+    context: vscode.ExtensionContext,
+    filename: string,
+    label: string,
+): Promise<void> {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
         return;
     }
-    const template = readPromptTemplate(context);
-    if (!template) {
+    let template: string;
+    try {
+        template = fs.readFileSync(
+            path.join(context.extensionPath, "resources", filename),
+            "utf8",
+        );
+    } catch (err) {
+        log.error(`cannot read ${label} template`, err);
         return;
     }
     const targetDir = vscode.Uri.joinPath(folder.uri, ".github", "prompts");
-    const targetFile = vscode.Uri.joinPath(targetDir, "bbb.prompt.md");
+    const targetFile = vscode.Uri.joinPath(targetDir, filename);
     try {
         await vscode.workspace.fs.stat(targetFile);
-        log.info("/bbb prompt already installed; nothing to do", { uri: targetFile.toString() });
+        log.info(`${label} already installed; nothing to do`, { uri: targetFile.toString() });
         return;
     } catch {
         // missing — fall through to create
     }
     await vscode.workspace.fs.createDirectory(targetDir);
     await vscode.workspace.fs.writeFile(targetFile, new TextEncoder().encode(template));
-    log.info("auto-installed /bbb prompt", { uri: targetFile.toString() });
+    log.info(`auto-installed ${label}`, { uri: targetFile.toString() });
+}
+
+async function ensureBbbPrompt(context: vscode.ExtensionContext): Promise<void> {
+    await ensureNamedPrompt(context, "bbb.prompt.md", "/bbb prompt");
+}
+
+async function ensureBbbNoobPrompt(context: vscode.ExtensionContext): Promise<void> {
+    await ensureNamedPrompt(context, "bbb-noob.prompt.md", "/bbb-noob prompt");
 }
 
 async function installCopilotInstructions(context: vscode.ExtensionContext): Promise<void> {
@@ -362,9 +385,10 @@ async function installCopilotInstructions(context: vscode.ExtensionContext): Pro
     if (promptTemplate) {
         await ensureBbbPrompt(context);
     }
+    await ensureBbbNoobPrompt(context);
     await vscode.window.showTextDocument(targetFile);
     void vscode.window.showInformationMessage(
-        "BBB: Copilot instructions installed. Use /bbb in Copilot Chat to write a playbook for you to perform.",
+        "BBB: Copilot instructions installed. Use /bbb in Copilot Chat to write a playbook — or /bbb-noob for beginner-depth, every line broken down part by part.",
     );
 }
 

@@ -156,6 +156,8 @@ export const editHandler: StepHandler<EditStep> = {
                     return {
                         ok: false,
                         reason: `expected \`${truncate(expectedContent, 30)}\`, got \`${truncate(actualContent, 30)}\``,
+                        detail: `Expected:\n${expectedContent}\n\nGot:\n${actualContent}`,
+                        diff: { actual: actualContent, expected: expectedContent },
                     };
                 }
             } else {
@@ -165,6 +167,8 @@ export const editHandler: StepHandler<EditStep> = {
                     return {
                         ok: false,
                         reason: `line ${docLineIdx + 1}: expected \`${truncate(expectedBody.trimEnd(), 30)}\`, got \`${truncate(actual.trimEnd(), 30)}\``,
+                        detail: `Expected:\n${expectedBody.trimEnd()}\n\nGot:\n${actual.trimEnd()}`,
+                        diff: { actual: actual.trimEnd(), expected: expectedBody.trimEnd() },
                     };
                 }
             }
@@ -272,22 +276,10 @@ export const openHandler: StepHandler<OpenStep> = {
 // ---------- create ----------
 
 export const createHandler: StepHandler<CreateStep> = {
-    async activate(step, ctx) {
-        // Scaffold the file (and any parent folders) so the following edit steps
-        // always have a real target to type into. Creating an empty file is pure
-        // boilerplate, not a teaching moment, so BBB does it for the learner.
-        const uri = workspaceUriForFile(ctx.playbookUri, step.file);
-        try {
-            await vscode.workspace.fs.stat(uri);
-        } catch {
-            await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, ".."));
-            await vscode.workspace.fs.writeFile(uri, new Uint8Array());
-        }
-        const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc, { preserveFocus: false });
-    },
-    prompt(step) {
-        return `Create and open ${step.file}`;
+    prompt(step, ctx) {
+        const newFile = ctx.keybindings.forCommand("workbench.action.files.newUntitledFile");
+        const saveAs = ctx.keybindings.forCommand("workbench.action.files.saveAs");
+        return `Create ${step.file}: ${newFile} for a new file, ${saveAs} to save it, type the path, Enter`;
     },
     async verify(step, ctx) {
         const uri = workspaceUriForFile(ctx.playbookUri, step.file);

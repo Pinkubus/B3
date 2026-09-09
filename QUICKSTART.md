@@ -32,7 +32,7 @@ In the Extension Development Host window:
 2. Open the **Command Palette** (`Ctrl+Shift+P`) and run:  
    **`BBB: Install Copilot instructions into this workspace`**
 
-This writes `.github/copilot-instructions.md` and `.github/prompts/bbb.prompt.md` into the workspace. The prompt makes `/bbb` available in Copilot Chat, and the instructions tell Copilot: *"Don't edit files — write a playbook instead."*
+This writes `.github/copilot-instructions.md`, `.github/prompts/bbb.prompt.md`, and `.github/prompts/bbb-noob.prompt.md` into the workspace. The prompts make `/bbb` and `/bbb-noob` available in Copilot Chat, and the instructions tell Copilot: *"Don't edit files — write a playbook instead."*
 
 ---
 
@@ -40,6 +40,8 @@ This writes `.github/copilot-instructions.md` and `.github/prompts/bbb.prompt.md
 
 Open Copilot Chat and type `/bbb`, then ask it to implement anything — add a function, create a file, whatever.  
 Instead of editing files directly, it will write (or append to) **`.bbb/playbook.md`** with numbered steps.
+
+Type **`/bbb-noob`** instead of `/bbb` for **NOOB MODE**: the same playbook format, but written for someone who has never programmed. Every step gets a full left-to-right `explain` of the line plus a `teach` popup, new concepts get a glossary `note` the first time they appear, and it checkpoints (compile/run) every 2–3 edits instead of every 5.
 
 ---
 

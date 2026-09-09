@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { highlightLine, escapeHtml } from "./syntaxHighlight";
 
 /**
  * A reusable webview panel that shows the comprehension ("teach") note for the
@@ -32,103 +33,7 @@ export class TeachView {
     }
 }
 
-// ── syntax palette ─────────────────────────────────────────────────────────────
-
-const COLORS = {
-    keyword: "#569cd6",
-    builtin: "#4ec9b0",
-    string: "#ce9178",
-    comment: "#6a9955",
-    number: "#b5cea8",
-    funcname: "#dcdcaa",
-    ident: "#9cdcfe",
-    op: "#c586c0",
-    plain: "#f2f5f8",
-};
-
-const KEYWORDS = new Set([
-    // JavaScript
-    "await", "async", "break", "case", "catch", "class", "const", "continue",
-    "default", "delete", "do", "else", "export", "extends", "finally", "for",
-    "function", "if", "import", "in", "instanceof", "let", "new", "of", "return",
-    "super", "switch", "this", "throw", "try", "typeof", "var", "void", "while",
-    "yield", "true", "false", "null", "undefined",
-    // Python extras
-    "and", "as", "assert", "def", "elif", "except", "from", "global", "is",
-    "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "True", "False",
-    "with",
-]);
-
-const BUILTINS = new Set([
-    "document", "window", "console", "Set", "Map", "Array", "Object", "String",
-    "Number", "Boolean", "JSON", "Math", "Promise", "Element", "Node",
-    "querySelector", "querySelectorAll", "getElementById", "getElementsByClassName",
-    "createElement", "appendChild", "addEventListener", "forEach", "map", "filter",
-    "push", "has", "add", "includes",
-    // Python builtins that may appear
-    "print", "len", "range", "list", "dict", "set", "int", "str", "float", "bool",
-    "enumerate", "zip", "sorted", "open",
-]);
-
-const TOKEN_RE =
-    /(?<comment>\/\/[^\n]*|#[^\n]*)|(?<string>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(?<number>\b\d+(?:\.\d+)?\b)|(?<ident>[A-Za-z_$][\w$]*)|(?<op>=>|===|!==|==|!=|>=|<=|->|:=|[-+*/%=<>!&|.]+)|(?<other>[\s\S])/g;
-
-function escapeHtml(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function span(color: string, text: string): string {
-    return `<span style="color:${color}">${escapeHtml(text)}</span>`;
-}
-
-/** Tokenise a line of code and return HTML with per-token colour spans. */
-function highlight(code: string): string {
-    let out = "";
-    let nextIsFuncName = false;
-    // Re-create the regex per call so lastIndex state never leaks.
-    const re = new RegExp(TOKEN_RE.source, "g");
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(code)) !== null) {
-        const g = m.groups!;
-        const text = m[0];
-        if (g.comment !== undefined) {
-            out += span(COLORS.comment, text);
-            nextIsFuncName = false;
-        } else if (g.string !== undefined) {
-            out += span(COLORS.string, text);
-            nextIsFuncName = false;
-        } else if (g.number !== undefined) {
-            out += span(COLORS.number, text);
-            nextIsFuncName = false;
-        } else if (g.ident !== undefined) {
-            // Peek past whitespace for a '(' to spot a function call/name.
-            const rest = code.slice(re.lastIndex);
-            const followedByParen = /^\s*\(/.test(rest);
-            if (nextIsFuncName || followedByParen) {
-                out += span(COLORS.funcname, text);
-                nextIsFuncName = false;
-            } else if (KEYWORDS.has(text)) {
-                out += span(COLORS.keyword, text);
-                nextIsFuncName = text === "def" || text === "function";
-            } else if (BUILTINS.has(text)) {
-                out += span(COLORS.builtin, text);
-                nextIsFuncName = false;
-            } else {
-                out += span(COLORS.ident, text);
-                nextIsFuncName = false;
-            }
-        } else if (g.op !== undefined) {
-            out += span(COLORS.op, text);
-            nextIsFuncName = false;
-        } else {
-            out += escapeHtml(text);
-            if (text.trim()) {
-                nextIsFuncName = false;
-            }
-        }
-    }
-    return out;
-}
+// ── code-line detection ────────────────────────────────────────────────────────
 
 /** True if a line looks like code rather than prose (indented, non-bullet). */
 function isCodeLine(line: string): boolean {
@@ -146,7 +51,7 @@ function renderBody(teach: string): string {
 
     const flushCode = () => {
         if (codeBuffer.length) {
-            html.push(`<pre class="code">${codeBuffer.map(highlight).join("\n")}</pre>`);
+            html.push(`<pre class="code">${codeBuffer.map(highlightLine).join("\n")}</pre>`);
             codeBuffer = [];
         }
     };

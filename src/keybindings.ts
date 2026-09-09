@@ -12,6 +12,8 @@ const DEFAULT_KEYBINDINGS_WIN_LINUX: Record<string, string> = {
     "workbench.action.chat.open": "Ctrl+Alt+I",
     "workbench.action.closeSidebar": "Ctrl+B",
     "workbench.action.closePanel": "Ctrl+J",
+    "workbench.action.files.newUntitledFile": "Ctrl+N",
+    "workbench.action.files.saveAs": "Ctrl+Shift+S",
 };
 
 const DEFAULT_KEYBINDINGS_MAC: Record<string, string> = {
@@ -23,6 +25,8 @@ const DEFAULT_KEYBINDINGS_MAC: Record<string, string> = {
     "workbench.action.chat.open": "Cmd+Ctrl+I",
     "workbench.action.closeSidebar": "Cmd+B",
     "workbench.action.closePanel": "Cmd+J",
+    "workbench.action.files.newUntitledFile": "Cmd+N",
+    "workbench.action.files.saveAs": "Cmd+Shift+S",
 };
 
 import * as fs from "fs";

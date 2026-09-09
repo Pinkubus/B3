@@ -281,7 +281,9 @@ export class PlaybookRunner {
             const handler = handlerFor(step);
             const snapshot = this.currentSnapshot ?? this.takeSnapshot();
             const fullPrompt = handler.prompt(step, this.context(), snapshot);
-            this.presentationView.showStep(position, step.description, fullPrompt);
+            const { instruction, code } = this.presentationInstructionAndCode(step, fullPrompt, snapshot);
+            this.presentationView.showStep(position, step.description, instruction, code);
+            this.presentationView.showExplain(step.explain.trim());
             return;
         }
         const page = this.pages[this.currentPage];
@@ -289,6 +291,33 @@ export class PlaybookRunner {
         this.statusBar.text = `$(debug-step-over) BBB ${position}: ${page}${pageTag}`;
         this.statusBar.tooltip = step.description;
         this.statusBar.show();
+    }
+
+    /**
+     * Split a step's prompt into a plain instruction line and its code body (if
+     * any), so the presentation panel can render the code as syntax-highlighted
+     * monospace text instead of folding it into plain prose.
+     */
+    private presentationInstructionAndCode(
+        step: PlaybookStep,
+        fullPrompt: string,
+        snapshot: StepSnapshot,
+    ): { instruction: string; code?: string } {
+        if (step.kind === "edit") {
+            const uri = workspaceUriForFile(this.playbookUri!, step.file);
+            const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
+            const indentNote = step.indent > 0 ? ` (indent ${step.indent})` : "";
+            const instruction = step.after
+                ? `Type after \`${step.after.trim()}\`${indentNote}:`
+                : `Type on line ${step.line + offset}${indentNote}:`;
+            return { instruction, code: step.body };
+        }
+        if (step.kind === "replace") {
+            const uri = workspaceUriForFile(this.playbookUri!, step.file);
+            const offset = snapshot.lineOffsets[uri.toString()] ?? 0;
+            return { instruction: `Change line ${step.line + offset} to:`, code: step.newText };
+        }
+        return { instruction: fullPrompt };
     }
 
     private static splitIntoPages(text: string, max: number): string[] {
@@ -558,6 +587,9 @@ export class PlaybookRunner {
         }
         log.info("teach popup", { idx: this.currentIdx });
         this.teachView.show(step.description, text);
+        if (this.presentationModeEnabled) {
+            this.presentationView.showTeach(step.description, text);
+        }
     }
 
     /** Toggle comprehension mode on/off and remember it across sessions. */
@@ -574,6 +606,9 @@ export class PlaybookRunner {
             const step = this.steps[this.currentIdx];
             if (step.teach && step.teach.trim()) {
                 this.teachView.show(step.description, step.teach.trim());
+                if (this.presentationModeEnabled) {
+                    this.presentationView.showTeach(step.description, step.teach.trim());
+                }
             }
         }
         vscode.window.setStatusBarMessage(

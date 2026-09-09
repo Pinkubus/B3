@@ -1,0 +1,149 @@
+========================================================================
+BBB (Brick by Brick) - full install / setup command list
+========================================================================
+
+WHAT THIS IS
+  A VS Code extension written in TypeScript. To get it "working" you need:
+    1. Git            (to get / update the code)
+    2. Node.js + npm  (Node 20 LTS - build toolchain)
+    3. VS Code 1.93+  (to actually run the extension with F5)
+    4. The project's npm packages (installed with `npm install`)
+    5. A one-time TypeScript build (`npm run compile`)
+
+  Python is NOT needed for this project. Ignore anything about pip/venv.
+
+HOW TO USE THIS FILE
+  Pick the section for your OS. Paste the lines in order, top to bottom.
+  Lines starting with `#` are comments - harmless to paste.
+  After installing Git/Node/VS Code, CLOSE and REOPEN your terminal once
+  so the new commands are found on PATH, then continue.
+
+========================================================================
+WINDOWS  (use PowerShell)
+========================================================================
+
+# --- 1. Install Git, Node.js LTS, and VS Code via winget -----------------
+winget install --id Git.Git -e --source winget
+winget install --id OpenJS.NodeJS.LTS -e --source winget
+winget install --id Microsoft.VisualStudioCode -e --source winget
+
+# --- 2. CLOSE this terminal, open a NEW PowerShell window, then verify ---
+git --version
+node --version
+npm --version
+code --version
+
+# --- 3. Get the project ------------------------------------------------
+# If you already have the B3 folder, just cd into it and skip the clone.
+cd $HOME\Desktop
+git clone <REPO-URL-HERE> B3
+cd B3
+
+# (optional) sibling folder the F5 debug config opens as a test workspace
+if (-not (Test-Path ..\B3-test)) { New-Item -ItemType Directory ..\B3-test }
+
+# --- 4. Install dependencies and build --------------------------------
+npm install
+npm run compile
+
+# --- 5. Run it -------------------------------------------------------
+# Open the folder in VS Code, then press F5 ("Run Extension").
+code .
+# Leave this running while you work; it rebuilds on save:
+npm run watch
+
+# --- 6. (optional) Build a shareable .vsix instead of using F5 --------
+npm install -g @vscode/vsce
+vsce package
+# then in VS Code: Extensions panel > "..." > Install from VSIX...
+
+========================================================================
+macOS  (uses Homebrew)
+========================================================================
+
+# --- 1. Install Homebrew (skip if `brew --version` already works) -----
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# --- 2. Install Git, Node LTS, VS Code -------------------------------
+brew install git
+brew install node@20
+brew install --cask visual-studio-code
+
+# --- 3. Restart terminal, then verify ------------------------------
+git --version
+node --version
+npm --version
+code --version
+
+# --- 4. Get the project ------------------------------------------------
+cd ~/Desktop
+git clone <REPO-URL-HERE> B3
+cd B3
+mkdir -p ../B3-test
+
+# --- 5. Install dependencies and build --------------------------------
+npm install
+npm run compile
+
+# --- 6. Run it -------------------------------------------------------
+code .
+# press F5 in VS Code, and optionally keep this rebuilding on save:
+npm run watch
+
+========================================================================
+LINUX  (Debian / Ubuntu)
+========================================================================
+
+# --- 1. Git ---------------------------------------------------------
+sudo apt-get update
+sudo apt-get install -y git curl
+
+# --- 2. Node.js 20 LTS (NodeSource) --------------------------------
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# --- 3. VS Code ---------------------------------------------------
+sudo apt-get install -y wget gpg
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
+sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list
+rm -f packages.microsoft.gpg
+sudo apt-get update
+sudo apt-get install -y code
+
+# --- 4. Verify ---------------------------------------------------
+git --version
+node --version
+npm --version
+code --version
+
+# --- 5. Get the project, install, build -------------------------
+cd ~
+git clone <REPO-URL-HERE> B3
+cd B3
+mkdir -p ../B3-test
+npm install
+npm run compile
+
+# --- 6. Run it -------------------------------------------------
+code .
+# press F5 in VS Code; optional watch build:
+npm run watch
+
+========================================================================
+TROUBLESHOOTING
+========================================================================
+
+# "npm not found" after install  -> close & reopen the terminal (PATH refresh)
+
+# Corporate proxy / TLS errors on npm install:
+#   npm config set registry https://registry.npmjs.org/
+
+# Wipe and reinstall dependencies from scratch:
+#   Windows PowerShell:  Remove-Item -Recurse -Force node_modules; npm install
+#   mac/Linux:           rm -rf node_modules && npm install
+
+# Build succeeded if the `out/` folder now contains extension.js and friends.
+
+# Extension won't launch on F5: make sure you opened the B3 folder itself
+# in VS Code (File > Open Folder...), not a parent folder.
